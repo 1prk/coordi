@@ -2,7 +2,7 @@
 (function (App) {
   'use strict';
   const { esc } = App.utils;
-  const { deriveVp, teilpunktabstand, lageLabel, computeProposedBand } = App.coordination;
+  const { deriveVp, teilpunktabstand, lageLabel, computeQualitativeBand, computeProposedBand } = App.coordination;
   const { renderDiagram } = App.diagram;
   const state = App.state;
 
@@ -10,7 +10,8 @@
     btnAddFile: document.getElementById('btnAddFile'),
     fileInput: document.getElementById('fileInput'),
     dirSelect: document.getElementById('dirSelect'),
-    bandSelect: document.getElementById('bandSelect'),
+    bandQualitativeInput: document.getElementById('bandQualitativeInput'),
+    bandOptimumInput: document.getElementById('bandOptimumInput'),
     baseStationInput: document.getElementById('baseStationInput'),
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
@@ -271,6 +272,11 @@
 
     const orderedRows = dirTag === 'fwd' ? rows : rows.slice().reverse();
     const vpArray = segmentVpArray(orderedRows, dirTag);
+    // Zwei unabhängige Bänder: "Querschnitt" (qualitativ, je Abschnitt nur
+    // die Grünzeit des abfahrenden Knotens - zeigt, ob das Band jede
+    // Grünzeit im Zug überhaupt berührt) und "Optimum" (kumulativ, das Band,
+    // das durchgehend durch JEDE Grünzeit passt).
+    const qualitativeBand = computeQualitativeBand(rows, vpArray, TU, dirTag);
     const proposedBand = computeProposedBand(rows, vpArray, TU, dirTag);
     const ref = dirTag === 'fwd' ? rows[0] : rows[rows.length - 1];
 
@@ -280,7 +286,7 @@
     const tRangeMin = Math.min(...rows.map(r => r.tMin));
     const tRangeMax = Math.max(...rows.map(r => r.tMax));
 
-    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vpArray, proposedBand, ref, tRangeMin, tRangeMax };
+    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vpArray, qualitativeBand, proposedBand, ref, tRangeMin, tRangeMax };
   }
 
   function recompute() {
@@ -340,7 +346,7 @@
           ? (vps.every(v => v === vps[0]) ? `bei ${vps[0]} km/h` : `bei ${Math.min(...vps)}–${Math.max(...vps)} km/h je Abschnitt`)
           : '';
         kpis.push({
-          label: `Bandbreite ${tag} (Vorschlag)`,
+          label: `Bandbreite ${tag} (Optimum)`,
           value: res.proposedBand.bandwidth.toFixed(1) + ' s',
           sub: res.proposedBand.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : vpSub
         });
@@ -354,11 +360,13 @@
       </div>`).join('');
 
     /* ---- Diagramm ---- */
-    const drawBand = els.bandSelect.value === 'on';
+    const showQualitative = els.bandQualitativeInput.checked;
+    const showOptimum = els.bandOptimumInput.checked;
     const TU = resHin.ok ? resHin.TU : resRev.TU;
     const toDirGeom = (res, tag, tagColor, gridColor, bandFill, bandStroke) => res.ok ? {
       rows: res.rows, refCycleStarts: res.orderedRows[0].cycleStarts, lTP: res.lTP,
-      proposedBand: res.proposedBand, bandFill, bandStroke, tag, tagColor, gridColor,
+      qualitativeBand: res.qualitativeBand, proposedBand: res.proposedBand,
+      bandFill, bandStroke, tag, tagColor, gridColor,
       tRangeMin: res.tRangeMin, tRangeMax: res.tRangeMax
     } : null;
     const hinGeom = toDirGeom(resHin, 'H', '#8a5a00', 'rgba(211,161,37,0.6)', 'rgba(211,161,37,0.35)', 'rgba(138,90,0,0.7)');
@@ -366,7 +374,7 @@
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
-    renderDiagram(els.diagram, { TU, drawBand, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    renderDiagram(els.diagram, { TU, showQualitative, showOptimum, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
     if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
@@ -393,7 +401,7 @@
     }).join('');
   }
 
-  [els.dirSelect, els.bandSelect, els.baseStationInput].forEach(el => el.addEventListener('change', recompute));
+  [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput].forEach(el => el.addEventListener('change', recompute));
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {

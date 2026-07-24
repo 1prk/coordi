@@ -24,12 +24,8 @@
           <option value="rev">Gegenrichtung</option>
         </select>
       </span>
-      <span class="tb-field">Grünband
-        <select id="bandSelect">
-          <option value="on">An</option>
-          <option value="off">Aus</option>
-        </select>
-      </span>
+      <label class="tb-field"><input type="checkbox" id="bandQualitativeInput" checked> Grünband Querschnitt</label>
+      <label class="tb-field"><input type="checkbox" id="bandOptimumInput" checked> Grünband Optimum</label>
       <span class="tb-field">Basis-Station [m]
         <input type="number" id="baseStationInput" step="10" value="0" title="Station des ersten Hin-Knotens - verschiebt die gesamte Achse (Hin und Rück)">
       </span>
@@ -61,8 +57,10 @@
       <span class="item"><span class="swatch" style="background:repeating-linear-gradient(90deg,var(--text-faint) 0 3px,transparent 3px 6px);height:2px;align-self:center;"></span>Teilpunkt-Raster</span>
       <span class="item"><span style="color:#8a5a00;font-weight:700;font-family:var(--mono);font-size:11px;">H</span> Hinrichtung</span>
       <span class="item"><span style="color:var(--accent);font-weight:700;font-family:var(--mono);font-size:11px;">R</span> Gegenrichtung</span>
-      <span class="item"><span class="swatch" style="background:rgba(211,161,37,.45);border:1px solid rgba(138,90,0,.7)"></span>Grünband Hinrichtung (bei V_p je Abschnitt)</span>
-      <span class="item"><span class="swatch" style="background:rgba(43,108,163,.40);border:1px solid rgba(43,108,163,.75)"></span>Grünband Gegenrichtung (bei V_p je Abschnitt)</span>
+      <span class="item"><span class="swatch" style="background:none;border:1px dashed #8a5a00;"></span>Grünband Querschnitt (H) – je Abschnitt nur Grünzeit des abfahrenden Knotens, keine Verengung</span>
+      <span class="item"><span class="swatch" style="background:none;border:1px dashed var(--accent);"></span>Grünband Querschnitt (R)</span>
+      <span class="item"><span class="swatch" style="background:rgba(211,161,37,.45);border:1px solid rgba(138,90,0,.7)"></span>Grünband Optimum (H) – durchgehend durch jede Grünzeit</span>
+      <span class="item"><span class="swatch" style="background:rgba(43,108,163,.40);border:1px solid rgba(43,108,163,.75)"></span>Grünband Optimum (R)</span>
     </div>
     <div class="diagram-wrap" id="diagram"></div>
   </div>

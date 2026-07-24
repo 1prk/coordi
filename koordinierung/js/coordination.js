@@ -63,27 +63,9 @@
     return runs;
   }
 
-  // Prüft für eine je Abschnitt eigene (feste) Progressionsgeschwindigkeit
-  // (vpKmhArray[i] = Geschwindigkeit zwischen ordered[i] und ordered[i+1]),
-  // an welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an JEDEM
-  // nachfolgenden Knoten noch auf Grün trifft. Der gültige Zeitbereich kann
-  // sich von Knoten zu Knoten nur verengen (nie vergrößern) - die Breite
-  // startet bei der Grünzeit des Bezugsknotens und wird an jedem weiteren
-  // Knoten auf dessen Grünzeit beschnitten (nie wieder verbreitert), auch
-  // wenn dieser Knoten eine breitere Grünzeit hätte - je Abschnitt wird der
-  // kumulierte Gültigkeitsbereich bis einschließlich des jeweils erreichten
-  // Knotens zurückgegeben, sodass sich beim Rendern genau an der Stelle, an
-  // der ein Knoten den Bereich beschneidet, eine sichtbare Verengung
-  // ("Abschneiden") des Bandes ergibt.
-  function computeProposedBand(rows, vpKmhArray, TU, dir) {
-    if (!TU || rows.length < 2) return null;
-    const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
-    if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
-    const step = 0.25;
-    const nS = Math.max(4, Math.round(TU / step));
-    const ref = ordered[0];
-
-    // Kumulative Reisezeit mit je Abschnitt eigener Geschwindigkeit.
+  // Gemeinsame Reisezeit-Kette (je Abschnitt eigene Geschwindigkeit) - von
+  // beiden Bandarten genutzt. null, wenn eine Geschwindigkeit fehlt/0 ist.
+  function computeTau(ordered, vpKmhArray) {
     const tau = [0];
     for (let i = 1; i < ordered.length; i++) {
       const vp = Number(vpKmhArray[i - 1]);
@@ -91,6 +73,64 @@
       const dl = Math.abs(ordered[i].station - ordered[i - 1].station);
       tau.push(tau[i - 1] + dl / (vp / 3.6));
     }
+    return tau;
+  }
+
+  // "Querschnitts"-Band (qualitativ): je Abschnitt einfach die Grünzeit des
+  // ABFAHRENDEN Knotens, unabhängig von den übrigen Knoten - keine
+  // Verengung, keine Kumulierung. Zeigt auf einen Blick, ob das Band jede
+  // einzelne Grünzeit im Streckenzug überhaupt berührt/schneidet, ohne eine
+  // Aussage über die tatsächlich durchgehend nutzbare Bandbreite zu treffen.
+  function computeQualitativeBand(rows, vpKmhArray, TU, dir) {
+    if (!TU || rows.length < 2) return null;
+    const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
+    if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
+    const tau = computeTau(ordered, vpKmhArray);
+    if (!tau) return null;
+
+    const segments = [];
+    for (let i = 1; i < ordered.length; i++) {
+      const a = ordered[i - 1];
+      segments.push({
+        a, b: ordered[i], anA: a.an, tf: a.tf, dtSeg: tau[i] - tau[i - 1],
+        vp_kmh: Number(vpKmhArray[i - 1])
+      });
+    }
+    return { ordered, segments };
+  }
+
+  // Enthält das (mod TU periodische) Intervall "parent" das Intervall
+  // "child" vollständig? Für die Zuordnung Kind-Lauf -> Eltern-Lauf beim
+  // Tapern des Optimum-Bandes.
+  function intervalContainsMod(parent, child, TU) {
+    const pLen = parent.t0b - parent.t0a, cLen = child.t0b - child.t0a;
+    if (cLen > pLen + 1e-6) return false;
+    const pA = ((parent.t0a % TU) + TU) % TU;
+    let cA = ((child.t0a % TU) + TU) % TU;
+    if (cA < pA - 1e-6) cA += TU;
+    return cA >= pA - 1e-6 && (cA + cLen) <= (pA + pLen) + 1e-6;
+  }
+
+  // "Optimum"-Band: das Band, das JEDE Grünzeit im Streckenzug durchgehend
+  // durchläuft - für eine je Abschnitt eigene (feste) Progressionsgeschwin-
+  // digkeit, an welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an
+  // JEDEM nachfolgenden Knoten noch auf Grün trifft. Der gültige Zeitbereich
+  // kann sich von Knoten zu Knoten nur verengen (nie vergrößern) - die
+  // Breite startet bei der Grünzeit des Bezugsknotens und wird an jedem
+  // weiteren Knoten auf dessen Grünzeit beschnitten. Jeder Abschnitt tapert
+  // dabei von der bis zum ABFAHRENDEN Knoten gültigen Breite (nahes Ende) zur
+  // bis zum ANKOMMENDEN Knoten gültigen (u. U. engeren) Breite (fernes Ende) -
+  // die Verengung durch einen Knoten wird also sichtbar erst AB diesem
+  // Knoten wirksam, nicht schon rückwirkend im gesamten Abschnitt davor.
+  function computeProposedBand(rows, vpKmhArray, TU, dir) {
+    if (!TU || rows.length < 2) return null;
+    const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
+    if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
+    const step = 0.25;
+    const nS = Math.max(4, Math.round(TU / step));
+    const ref = ordered[0];
+    const tau = computeTau(ordered, vpKmhArray);
+    if (!tau) return null;
 
     let mask = new Array(nS);
     for (let s = 0; s < nS; s++) mask[s] = inGreen(s * step, ref.an, ref.tf, TU);
@@ -104,14 +144,20 @@
       }
       stageMasks.push(next);
     }
+    const runsOf = mask => circularRuns(mask).map(run => ({ t0a: run.start * step, t0b: (run.start + run.len) * step }));
 
     const segments = [];
     for (let i = 1; i < ordered.length; i++) {
-      const runs = circularRuns(stageMasks[i]).map(run => ({
-        t0a: run.start * step,
-        t0b: (run.start + run.len) * step,
-        width: run.len * step
-      }));
+      const prevRuns = runsOf(stageMasks[i - 1]);
+      const curRuns = runsOf(stageMasks[i]);
+      const runs = curRuns.map(cur => {
+        const parent = prevRuns.find(p => intervalContainsMod(p, cur, TU)) || cur;
+        return {
+          t0aNear: parent.t0a, t0bNear: parent.t0b,
+          t0aFar: cur.t0a, t0bFar: cur.t0b,
+          width: cur.t0b - cur.t0a
+        };
+      });
       segments.push({ a: ordered[i - 1], b: ordered[i], tauA: tau[i - 1], tauB: tau[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
     }
 
@@ -121,5 +167,8 @@
     return { ordered, tau, segments, bandwidth };
   }
 
-  App.coordination = { inGreen, greenCenter, deriveVp, teilpunktabstand, lageLabel, circularRuns, computeProposedBand };
+  App.coordination = {
+    inGreen, greenCenter, deriveVp, teilpunktabstand, lageLabel, circularRuns,
+    computeQualitativeBand, computeProposedBand
+  };
 })(window.App = window.App || {});
