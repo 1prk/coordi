@@ -1,54 +1,67 @@
-/* Koordinierung – Zeit-Weg-Diagramm (SVG), Hin- und Gegenrichtung kombiniert
-   auf gemeinsamer Zeit-/Weg-Achse (die Stationen je Richtung können leicht
-   voneinander abweichen, z. B. bei versetzten Haltlinien). */
+/* Koordinierung – Zeit-Weg-Diagramm (SVG): durchgehende Zeitachse über die
+   gesamte Aufzeichnung (nicht nach Umlaufzeit gestapelt) - zeigt reale
+   Grünsegmente aus den Rohdaten, damit sich die Koordinierung tatsächlich
+   über die Zeit durchblättern (scrollen) lässt. Hin- und Gegenrichtung
+   kombiniert auf gemeinsamer Zeit-/Weg-Achse. */
 (function (App) {
   'use strict';
-  const { esc } = App.utils;
+  const { esc, fmtTimeShort, fmtDateTimeShort } = App.utils;
 
-  // dir: {rows, lTP, proposedBand, bandFill, bandStroke, tag: 'H'|'R',
-  //       tagColor, gridColor} oder null
+  const NICE_STEPS_S = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+  function pickGridStepS(pxPerSec, minPx) {
+    for (const s of NICE_STEPS_S) if (s * pxPerSec >= minPx) return s;
+    return NICE_STEPS_S[NICE_STEPS_S.length - 1];
+  }
+
+  // dir: {rows, refCycleStarts, lTP, proposedBand, bandFill, bandStroke,
+  //       tag: 'H'|'R', tagColor, gridColor, tRangeMin, tRangeMax} oder null
   function renderDiagram(container, o) {
-    const { TU, Ncyc, drawBand, hin, rev } = o;
+    const { TU, drawBand, globalTMin, globalTMax, hin, rev } = o;
     const dirs = [hin, rev].filter(Boolean);
-    if (dirs.length === 0) { container.innerHTML = ''; return; }
+    if (dirs.length === 0 || !(globalTMax > globalTMin)) { container.innerHTML = ''; return; }
 
     const allRows = dirs.flatMap(d => d.rows);
     const sMin = Math.min(...allRows.map(r => r.station));
     const sMax = Math.max(...allRows.map(r => r.station));
     const corridor = sMax - sMin;
 
-    const mL = 56, mR = 18, mT = 16, mB = 54 + Math.max(0, dirs.length - 1) * 26;
+    const mL = 56, mR = 18, mT = 16;
+    const footerBaseH = 36 + Math.max(0, dirs.length - 1) * 26;
+    const mB = footerBaseH + 16; // + Zeile für aktuellen Signalzeitenplan je Knoten
     const wrapWidth = container.clientWidth || 800;
     const plotW = Math.max(240, wrapWidth - mL - mR - 4);
-    const pxPerSec = Math.max(1.6, 150 / TU);
-    const Ttot = Ncyc * TU;
-    const plotH = Ttot * pxPerSec;
+
+    const totalSec = (globalTMax - globalTMin) / 1000;
+    const TARGET_HEIGHT = 18000;
+    const pxPerSec = Math.min(4, Math.max(0.03, TARGET_HEIGHT / Math.max(totalSec, 1)));
+    const plotH = totalSec * pxPerSec;
     const W = mL + plotW + mR, H = mT + plotH;
     const sx = corridor > 0 ? plotW / corridor : 0;
     const X = s => mL + (s - sMin) * sx;
-    const Y = t => mT + plotH - t * pxPerSec;
+    const Y = tMs => mT + (tMs - globalTMin) / 1000 * pxPerSec;
     const clipId = 'coordClip' + Math.random().toString(36).slice(2, 8);
     const clip = `url(#${clipId})`;
+
     let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, ui-monospace, monospace">`;
     svg += `<defs><clipPath id="${clipId}"><rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}"/></clipPath></defs>`;
     svg += `<rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}" fill="#fff" stroke="var(--border-strong)"/>`;
 
-    for (let k = 0; k <= Ncyc; k++) {
-      const yB = Y(k * TU);
-      svg += `<line x1="${mL}" y1="${yB.toFixed(1)}" x2="${mL + plotW}" y2="${yB.toFixed(1)}" stroke="var(--border-strong)"/>`;
-      svg += `<text x="${mL - 6}" y="${(yB + 3).toFixed(1)}" text-anchor="end" font-size="9" font-weight="700" fill="var(--text-muted)">0</text>`;
+    // Gitterlinien mit echten Uhrzeiten - Schrittweite so gewählt, dass der
+    // Abstand zwischen zwei Linien lesbar bleibt, unabhängig von der
+    // Gesamtdauer der Aufzeichnung.
+    const gridStepS = pickGridStepS(pxPerSec, 42);
+    const gridStepMs = gridStepS * 1000;
+    const firstGrid = Math.ceil(globalTMin / gridStepMs) * gridStepMs;
+    let lastDateLabel = '';
+    for (let t = firstGrid; t <= globalTMax; t += gridStepMs) {
+      const y = Y(t);
+      svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
+      const dateLabel = fmtDateTimeShort(t).split(' ')[0];
+      const showDate = dateLabel !== lastDateLabel;
+      lastDateLabel = dateLabel;
+      svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-faint)">${showDate ? esc(fmtDateTimeShort(t)) : fmtTimeShort(t)}</text>`;
     }
-    // Gestrichelte Hilfslinien alle 10s innerhalb jedes Umlaufs.
-    for (let k = 0; k < Ncyc; k++) {
-      const yBottom = Y(k * TU);
-      for (let t = 10; t < TU; t += 10) {
-        const y = Y(k * TU + t);
-        svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
-        svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="8" fill="var(--text-faint)">${t}</text>`;
-      }
-      svg += `<text x="${(mL + 4).toFixed(1)}" y="${(yBottom - 4).toFixed(1)}" font-size="8" fill="var(--text-faint)">Umlauf ${k + 1}</text>`;
-    }
-    svg += `<text x="12" y="${mT + plotH / 2}" font-size="10" fill="var(--text-muted)" transform="rotate(-90 12 ${mT + plotH / 2})" text-anchor="middle">Zeit t [s] je Umlauf (0…${TU})</text>`;
+    svg += `<text x="12" y="${mT + plotH / 2}" font-size="10" fill="var(--text-muted)" transform="rotate(-90 12 ${mT + plotH / 2})" text-anchor="middle">Zeit (durchgehend) ↓</text>`;
 
     dirs.forEach(d => {
       if (!(d.lTP > 0 && corridor > 0)) return;
@@ -62,53 +75,50 @@
     });
 
     // Grünband bei der je Abschnitt vorgegebenen Progressionsgeschwindigkeit:
-    // Breite startet bei der Grünzeit des Bezugsknotens und wird an jedem
-    // weiteren Knoten auf dessen Grünzeit beschnitten (nie wieder
-    // verbreitert) - zeigt als Overlay, ob/wo die gewählte Geschwindigkeit
-    // eine durchgehende Welle ergibt.
+    // dieselbe (umlaufperiodische) Maske wie zuvor, aber wiederholt an den
+    // ECHTEN Umlaufgrenzen des Bezugsknotens über die gesamte Aufzeichnung -
+    // Breite startet bei dessen Grünzeit und wird an jedem weiteren Knoten
+    // auf dessen (typische) Grünzeit beschnitten (nie wieder verbreitert).
     dirs.forEach(d => {
-      if (!drawBand || !d.proposedBand) return;
+      if (!drawBand || !d.proposedBand || !d.refCycleStarts || !d.refCycleStarts.length) return;
       let propSvg = '';
-      for (let k = -1; k <= Ncyc; k++) {
+      d.refCycleStarts.forEach(cs => {
         d.proposedBand.segments.forEach(seg => {
           const xA = X(seg.a.station), xB = X(seg.b.station);
           seg.runs.forEach(run => {
-            const yA0 = Y(run.t0a + seg.tauA + k * TU), yA1 = Y(run.t0b + seg.tauA + k * TU);
-            const yB0 = Y(run.t0a + seg.tauB + k * TU), yB1 = Y(run.t0b + seg.tauB + k * TU);
+            const yA0 = Y(cs + (run.t0a + seg.tauA) * 1000), yA1 = Y(cs + (run.t0b + seg.tauA) * 1000);
+            const yB0 = Y(cs + (run.t0a + seg.tauB) * 1000), yB1 = Y(cs + (run.t0b + seg.tauB) * 1000);
+            if (Math.max(yA0, yA1, yB0, yB1) < mT || Math.min(yA0, yA1, yB0, yB1) > mT + plotH) return;
             const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
               .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
             propSvg += `<polygon points="${pts}" fill="${d.bandFill}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h</title></polygon>`;
           });
         });
-      }
+      });
       svg += `<g clip-path="${clip}">${propSvg}</g>`;
     });
 
+    // Knotenlinien: Sperrzeit-Grundlinie nur über den TATSÄCHLICHEN
+    // Aufzeichnungszeitraum dieses Knotens (kürzere/versetzte Abdeckung wird
+    // so als Lücke sichtbar), reale Grünsegmente direkt aus den Rohdaten.
     dirs.forEach(d => {
       d.rows.forEach(r => {
         const x = X(r.station);
-        svg += `<line x1="${x.toFixed(1)}" y1="${mT}" x2="${x.toFixed(1)}" y2="${mT + plotH}" stroke="var(--sig-red)" stroke-width="2.5"/>`;
+        const yTop = Y(Math.max(r.tMin, globalTMin)), yBot = Y(Math.min(r.tMax, globalTMax));
+        svg += `<line x1="${x.toFixed(1)}" y1="${yTop.toFixed(1)}" x2="${x.toFixed(1)}" y2="${yBot.toFixed(1)}" stroke="var(--sig-red)" stroke-width="2.5"><title>${esc(r.name)} (${d.tag}): Aufzeichnung ${fmtDateTimeShort(r.tMin)} – ${fmtDateTimeShort(r.tMax)}</title></line>`;
         let overlay = '';
-        for (let k = -1; k <= Ncyc; k++) {
-          const gs = r.an + k * TU, ge = gs + r.tf;
-          const cs = Math.max(gs, 0), ce = Math.min(ge, Ttot);
-          if (ce <= cs) continue;
-          const yTop = Y(ce), yBot = Y(cs);
-          overlay += `<rect x="${(x - 3).toFixed(1)}" y="${yTop.toFixed(1)}" width="6" height="${(yBot - yTop).toFixed(1)}" fill="var(--sig-green)"><title>${esc(r.name)} (${d.tag}): An ${r.an}s, Ab ${r.ab}s, TF ${r.tf}s</title></rect>`;
-          if (k >= 0 && k < Ncyc) {
-            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(yBot + 3).toFixed(1)}" font-size="7.5" fill="var(--text-muted)">${r.an}</text>`;
-            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(yTop - 2).toFixed(1)}" font-size="7.5" fill="var(--text-muted)">${r.ab}</text>`;
-          }
-        }
+        (r.greenSegs || []).forEach(seg => {
+          const ys = Y(seg.start), ye = Y(seg.end);
+          if (ye < mT || ys > mT + plotH) return;
+          overlay += `<rect x="${(x - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${Math.max(1, ye - ys).toFixed(1)}" fill="var(--sig-green)"><title>${esc(r.name)} (${d.tag}): ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
+        });
         svg += `<g clip-path="${clip}">${overlay}</g>`;
       });
     });
 
     svg += `</svg>`;
 
-    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung - bleibt
-    // beim vertikalen Scrollen im Diagramm sichtbar, scrollt aber mit dem
-    // Diagramm horizontal mit (bleibt so über der jeweiligen Knotenlinie).
+    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung.
     const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
     let header = `<div class="diagram-sticky-header" style="width:${W}px;height:${headerH}px;">`;
     dirs.forEach((d, di) => {
@@ -119,13 +129,10 @@
     });
     header += `</div>`;
 
-    // Sticky Fußzeile (x-Achse): Knotennamen + Maßketten statt absoluter
-    // Stationsangaben - je Richtung ein Pfeil pro Abschnitt (Hin -> rechts,
-    // Rück -> links, entsprechend der Fahrtrichtung), beschriftet mit dem
-    // tatsächlichen Abschnittsabstand. Der erste Hin-Knoten bleibt der
-    // einzige Bezug zu einer absoluten Station (Basis-Station im
-    // Werkzeugleisten-Feld). Bleibt wie die Kopfzeile beim vertikalen
-    // Scrollen sichtbar (position:sticky; bottom:0).
+    // Sticky Fußzeile (x-Achse): Knotennamen + Maßketten (Abschnittsabstand,
+    // Hin -> rechts, Rück -> links) sowie eine Zeile mit dem je Knoten AKTUELL
+    // (an der Bildlaufposition) geltenden Signalzeitenplan - aktualisiert
+    // sich beim Scrollen durch die Historie.
     let footer = `<svg class="diagram-footer-svg" width="${W}" height="${mB}" viewBox="0 0 ${W} ${mB}" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, ui-monospace, monospace">`;
     footer += `<rect x="0" y="0" width="${W}" height="${mB}" fill="var(--bg-panel)"/>`;
     dirs.forEach((d, di) => {
@@ -153,16 +160,42 @@
         footer += `<text x="${midX.toFixed(1)}" y="${(y + 2).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${d.tagColor}">${dist} m</text>`;
       }
     });
-    footer += `<text x="${mL + plotW / 2}" y="${mB - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Weg s [m]</text>`;
+    footer += `<text x="${mL + plotW / 2}" y="${footerBaseH - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Weg s [m]</text>`;
+    footer += `<text id="diagramSplLive" x="${mL}" y="${mB - 4}" font-size="9" font-family="Consolas, ui-monospace, monospace" fill="var(--text-muted)"></text>`;
     footer += `</svg>`;
 
     container.innerHTML = header + svg
       + `<div class="diagram-sticky-footer" style="width:${W}px;">${footer}</div>`
       + `<div class="diagram-tooltip"></div>`;
-    container.scrollTop = container.scrollHeight;
 
-    // Snappy Tooltip: zeigt beim Bewegen der Maus die volle Sekunde (inkl.
-    // Umlauf) und den vollen Meter an der Cursorposition an.
+    // Aktuellen Signalzeitenplan je Knoten anzeigen - bezogen auf die Zeit
+    // am oberen Rand des sichtbaren Ausschnitts, aktualisiert beim Scrollen.
+    const splLiveEl = container.querySelector('#diagramSplLive');
+    function updateSplLive() {
+      if (!splLiveEl) return;
+      const tAtTop = globalTMin + (container.scrollTop / pxPerSec) * 1000;
+      const parts = [];
+      dirs.forEach(d => {
+        d.rows.forEach(r => {
+          if (tAtTop < r.tMin || tAtTop > r.tMax) return;
+          const period = (r.splPeriods || []).find(p => tAtTop >= p.start && tAtTop < p.end);
+          if (period) parts.push(`${d.tag} ${r.name}: SPL ${period.spl}`);
+        });
+      });
+      splLiveEl.textContent = parts.length
+        ? `${fmtDateTimeShort(tAtTop)} · ${parts.join(' · ')}`
+        : fmtDateTimeShort(tAtTop);
+    }
+    let scrollScheduled = false;
+    container.addEventListener('scroll', () => {
+      if (scrollScheduled) return;
+      scrollScheduled = true;
+      requestAnimationFrame(() => { updateSplLive(); scrollScheduled = false; });
+    });
+    updateSplLive();
+
+    // Snappy Tooltip: zeigt beim Bewegen der Maus die Uhrzeit und den vollen
+    // Meter an der Cursorposition an.
     const svgEl = container.querySelector('svg');
     const tooltipEl = container.querySelector('.diagram-tooltip');
     if (svgEl && tooltipEl) {
@@ -175,11 +208,9 @@
           tooltipEl.style.display = 'none';
           return;
         }
-        const tAbs = Math.round((mT + plotH - localY) / pxPerSec);
-        const cyc = Math.floor(tAbs / TU) + 1;
-        const tInCyc = ((tAbs % TU) + TU) % TU;
+        const tMs = globalTMin + (localY - mT) / pxPerSec * 1000;
         const sVal = Math.round(sMin + (localX - mL) / (sx || 1e-6));
-        tooltipEl.textContent = `t = ${tInCyc}s · Umlauf ${cyc} · s = ${sVal} m`;
+        tooltipEl.textContent = `t = ${fmtDateTimeShort(tMs)} · s = ${sVal} m`;
         const hostRect = container.getBoundingClientRect();
         tooltipEl.style.left = (e.clientX - hostRect.left + container.scrollLeft + 14) + 'px';
         tooltipEl.style.top = (e.clientY - hostRect.top + container.scrollTop - 26) + 'px';
