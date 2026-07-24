@@ -83,9 +83,14 @@
     els.nodeList.innerHTML = nodes.map((n, i) => {
       const label = n.knotenName || n.fileName;
       const sub = n.knotenNr ? `Nr. ${esc(n.knotenNr)}` : '';
-      const disabled = i === 0 ? 'disabled' : '';
-      const distHin = i === 0 ? 0 : n.distanceHin;
-      const distRev = i === 0 ? 0 : n.distanceRev;
+      // Hin zählt vorwärts ab der ersten Karte (Station 0 dort); Rück zählt
+      // rückwärts ab der letzten Karte (Station 0 dort) - "Abstand Rück" auf
+      // einer Karte ist daher der Abstand zur NÄCHSTEN Karte (Richtung Ende),
+      // nicht zur vorherigen.
+      const hinDisabled = i === 0;
+      const revDisabled = i === nodes.length - 1;
+      const distHin = hinDisabled ? 0 : n.distanceHin;
+      const distRev = revDisabled ? 0 : n.distanceRev;
       return `<div class="node-card" data-id="${n.id}">
         <div class="node-order">
           <button type="button" class="icon-btn node-up" ${i === 0 ? 'disabled' : ''} title="nach oben">▲</button>
@@ -102,7 +107,7 @@
           </div>
           <div class="node-field hin">
             <label>Abstand Hin [m]</label>
-            <input type="number" class="node-dist-input node-dist-hin" min="0" step="10" value="${distHin}" ${disabled}>
+            <input type="number" class="node-dist-input node-dist-hin" min="0" step="10" value="${distHin}" ${hinDisabled ? 'disabled' : ''}>
           </div>
           <div class="node-field rev">
             <label>Hauptsignal Rück</label>
@@ -110,7 +115,7 @@
           </div>
           <div class="node-field rev">
             <label>Abstand Rück [m]</label>
-            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}" ${disabled}>
+            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}" ${revDisabled ? 'disabled' : ''}>
           </div>
         </div>
         <button type="button" class="icon-btn node-remove" title="entfernen">×</button>
@@ -133,22 +138,27 @@
   }
 
   /* ---------------- Berechnung ---------------- */
-  // dirKey: 'Hin' -> mainColHin/distanceHin, gefahren aufsteigend (dir='fwd')
-  //         'Rev' -> mainColRev/distanceRev, gefahren absteigend (dir='rev')
+  // dirKey: 'Hin' -> mainColHin/distanceHin, gefahren aufsteigend (dir='fwd').
+  //         Station 0 an der ERSTEN Karte, "Abstand Hin" auf Karte i ist der
+  //         Abstand zur vorherigen Karte.
+  //
+  //         'Rev' -> mainColRev/distanceRev, gefahren absteigend (dir='rev').
+  //         Station 0 an der LETZTEN Karte, "Abstand Rück" auf Karte i ist
+  //         der Abstand zur NÄCHSTEN Karte (Richtung Ende) - die Karten
+  //         werden daher von hinten nach vorn durchlaufen, damit die
+  //         zurückgegebenen Zeilen wie bei Hin aufsteigend nach Station
+  //         sortiert sind.
   function collectRows(dirKey) {
-    const colField = dirKey === 'Hin' ? 'mainColHin' : 'mainColRev';
-    const distField = dirKey === 'Hin' ? 'distanceHin' : 'distanceRev';
     const nodes = state.intersections;
-    let station = 0;
     const rows = [];
     let TUref = null;
     const tus = [];
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      if (i > 0) station += Number(n[distField]) || 0;
+    const colField = dirKey === 'Hin' ? 'mainColHin' : 'mainColRev';
+
+    const pushRow = (n, station) => {
       const col = n[colField];
       const plan = col != null ? n.planByCol.get(col) : null;
-      if (!plan || !n.TU) continue;
+      if (!plan || !n.TU) return;
       tus.push(n.TU);
       if (TUref == null) TUref = n.TU;
       const colInfo = n.columns.find(c => c.index === col);
@@ -159,6 +169,19 @@
         station,
         an: plan.an, ab: plan.ab, tf: plan.tf
       });
+    };
+
+    let station = 0;
+    if (dirKey === 'Hin') {
+      for (let i = 0; i < nodes.length; i++) {
+        if (i > 0) station += Number(nodes[i].distanceHin) || 0;
+        pushRow(nodes[i], station);
+      }
+    } else {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        if (i < nodes.length - 1) station += Number(nodes[i].distanceRev) || 0;
+        pushRow(nodes[i], station);
+      }
     }
     return { rows, TU: TUref, tus };
   }
