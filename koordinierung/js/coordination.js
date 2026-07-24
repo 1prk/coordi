@@ -42,5 +42,72 @@
     return f < 0.5 ? 'Teilpunktnähe (rechts)' : 'Teilpunktnähe (links)';
   }
 
-  App.coordination = { inGreen, greenCenter, deriveVp, teilpunktabstand, lageLabel };
+  // Zusammenhängende (zirkuläre) True-Läufe in einem Bool-Array.
+  function circularRuns(mask) {
+    const n = mask.length;
+    if (n === 0) return [];
+    if (mask.every(Boolean)) return [{ start: 0, len: n }];
+    if (!mask.some(Boolean)) return [];
+    let origin = mask.findIndex((v, i) => v && !mask[(i - 1 + n) % n]);
+    if (origin === -1) origin = 0;
+    const runs = [];
+    let i = 0;
+    while (i < n) {
+      if (mask[(origin + i) % n]) {
+        let len = 0;
+        while (len < n && mask[(origin + i + len) % n]) len++;
+        runs.push({ start: (origin + i) % n, len });
+        i += len;
+      } else i++;
+    }
+    return runs;
+  }
+
+  // Prüft für eine vorgegebene (feste) Progressionsgeschwindigkeit VpKmh, an
+  // welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an JEDEM
+  // nachfolgenden Knoten noch auf Grün trifft. Der gültige Zeitbereich kann
+  // sich von Knoten zu Knoten nur verengen (nie vergrößern) - je Abschnitt
+  // wird daher der kumulierte Gültigkeitsbereich bis einschließlich des
+  // jeweils erreichten Knotens zurückgegeben, sodass sich beim Rendern genau
+  // an der Stelle, an der ein Knoten den Bereich beschneidet, eine sichtbare
+  // Verengung ("Abschneiden") des Bandes ergibt.
+  function computeProposedBand(rows, VpKmh, TU, dir) {
+    if (!VpKmh || VpKmh <= 0 || !TU || rows.length < 2) return null;
+    const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
+    const Vp_ms = VpKmh / 3.6;
+    const step = 0.25;
+    const nS = Math.max(4, Math.round(TU / step));
+    const ref = ordered[0];
+    const tau = ordered.map(r => Math.abs(r.station - ref.station) / Vp_ms);
+
+    let mask = new Array(nS);
+    for (let s = 0; s < nS; s++) mask[s] = inGreen(s * step, ref.an, ref.tf, TU);
+    const stageMasks = [mask];
+    for (let i = 1; i < ordered.length; i++) {
+      const r = ordered[i];
+      const prev = stageMasks[i - 1];
+      const next = new Array(nS);
+      for (let s = 0; s < nS; s++) {
+        next[s] = prev[s] && inGreen(s * step + tau[i], r.an, r.tf, TU);
+      }
+      stageMasks.push(next);
+    }
+
+    const segments = [];
+    for (let i = 1; i < ordered.length; i++) {
+      const runs = circularRuns(stageMasks[i]).map(run => ({
+        t0a: run.start * step,
+        t0b: (run.start + run.len) * step,
+        width: run.len * step
+      }));
+      segments.push({ a: ordered[i - 1], b: ordered[i], tauA: tau[i - 1], tauB: tau[i], runs });
+    }
+
+    const finalRuns = circularRuns(stageMasks[stageMasks.length - 1]);
+    const bandwidth = finalRuns.reduce((sum, r) => sum + r.len * step, 0);
+
+    return { ordered, tau, segments, bandwidth, Vp_kmh: VpKmh };
+  }
+
+  App.coordination = { inGreen, greenCenter, deriveVp, teilpunktabstand, lageLabel, circularRuns, computeProposedBand };
 })(window.App = window.App || {});

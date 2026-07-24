@@ -4,7 +4,7 @@
   const { esc } = App.utils;
 
   function renderDiagram(container, rows, o) {
-    const { TU, lTP, Ncyc, sMin, sMax, corridor, drawBand, useFwd, useRev, segsFwd, segsRev } = o;
+    const { TU, lTP, Ncyc, sMin, sMax, corridor, drawBand, useFwd, useRev, segsFwd, segsRev, proposedFwd, proposedRev } = o;
     const mL = 56, mR = 18, mT = 16, mB = 48;
     const plotW = Math.max(480, Math.min(1100, corridor > 0 ? corridor * 0.85 : 480));
     const pxPerSec = Math.max(1.6, 150 / TU);
@@ -63,6 +63,33 @@
       if (useFwd) bandSvg += drawParallelogramBand(rows, segsFwd);
       if (useRev) bandSvg += drawParallelogramBand(rows.slice().reverse(), segsRev);
       svg += `<g clip-path="${clip}">${bandSvg}</g>`;
+    }
+
+    // Band bei vorgegebener (fester) Progressionsgeschwindigkeit: je Abschnitt
+    // der kumulierte Gültigkeitsbereich (aus computeProposedBand) - zeigt an
+    // jedem Knoten sichtbar, ob und wie stark die Grünzeit das Band dort
+    // beschneidet.
+    const drawProposedBand = (proposed, fill, stroke) => {
+      let out = '';
+      for (let k = -1; k <= Ncyc; k++) {
+        proposed.segments.forEach(seg => {
+          const xA = X(seg.a.station), xB = X(seg.b.station);
+          seg.runs.forEach(run => {
+            const yA0 = Y(run.t0a + seg.tauA + k * TU), yA1 = Y(run.t0b + seg.tauA + k * TU);
+            const yB0 = Y(run.t0a + seg.tauB + k * TU), yB1 = Y(run.t0b + seg.tauB + k * TU);
+            const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
+              .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+            out += `<polygon points="${pts}" fill="${fill}" stroke="${stroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${proposed.Vp_kmh} km/h</title></polygon>`;
+          });
+        });
+      }
+      return out;
+    };
+    if (proposedFwd || proposedRev) {
+      let propSvg = '';
+      if (proposedFwd) propSvg += drawProposedBand(proposedFwd, 'rgba(211,161,37,0.35)', 'rgba(138,90,0,0.7)');
+      if (proposedRev) propSvg += drawProposedBand(proposedRev, 'rgba(43,108,163,0.30)', 'rgba(43,108,163,0.75)');
+      svg += `<g clip-path="${clip}">${propSvg}</g>`;
     }
 
     rows.forEach(r => {

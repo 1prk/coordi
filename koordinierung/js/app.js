@@ -2,7 +2,7 @@
 (function (App) {
   'use strict';
   const { esc, clamp } = App.utils;
-  const { deriveVp, teilpunktabstand, lageLabel } = App.coordination;
+  const { deriveVp, teilpunktabstand, lageLabel, computeProposedBand } = App.coordination;
   const { renderDiagram } = App.diagram;
   const state = App.state;
 
@@ -12,6 +12,8 @@
     dirSelect: document.getElementById('dirSelect'),
     cyclesInput: document.getElementById('cyclesInput'),
     bandSelect: document.getElementById('bandSelect'),
+    vpFwdInput: document.getElementById('vpFwdInput'),
+    vpRevInput: document.getElementById('vpRevInput'),
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
     hintBox: document.getElementById('hintBox'),
@@ -209,6 +211,14 @@
     if (useRev) kpis.push({ label: 'V_p Gegenrichtung', value: derRev.vp_kmh.toFixed(1) + ' km/h', cls: 'accent' });
     if (useFwd && bottleneckFwd) kpis.push({ label: 'Engste Stelle Hinrichtung', value: bwFwd.toFixed(0) + ' s', sub: bottleneckFwd.name });
     if (useRev && bottleneckRev) kpis.push({ label: 'Engste Stelle Gegenrichtung', value: bwRev.toFixed(0) + ' s', sub: bottleneckRev.name });
+
+    const vpFwdProposed = Number(els.vpFwdInput.value) || 0;
+    const vpRevProposed = Number(els.vpRevInput.value) || 0;
+    const proposedFwd = useFwd && vpFwdProposed > 0 ? computeProposedBand(rows, vpFwdProposed, TU, 'fwd') : null;
+    const proposedRev = useRev && vpRevProposed > 0 ? computeProposedBand(rows, vpRevProposed, TU, 'rev') : null;
+    if (proposedFwd) kpis.push({ label: 'Bandbreite Hinrichtung (Vorschlag)', value: proposedFwd.bandwidth.toFixed(1) + ' s', sub: proposedFwd.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `bei ${vpFwdProposed} km/h` });
+    if (proposedRev) kpis.push({ label: 'Bandbreite Gegenrichtung (Vorschlag)', value: proposedRev.bandwidth.toFixed(1) + ' s', sub: proposedRev.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `bei ${vpRevProposed} km/h` });
+
     els.kpiGrid.innerHTML = kpis.map(k => `
       <div class="kpi ${k.cls || ''}">
         <div class="k-label">${k.label}</div>
@@ -216,7 +226,7 @@
         ${k.sub ? `<div class="k-sub">${esc(k.sub)}</div>` : ''}
       </div>`).join('');
 
-    renderDiagram(els.diagram, rows, { TU, lTP, Ncyc, sMin, sMax, corridor, drawBand, useFwd, useRev, segsFwd: derFwd.segs, segsRev: derRev.segs });
+    renderDiagram(els.diagram, rows, { TU, lTP, Ncyc, sMin, sMax, corridor, drawBand, useFwd, useRev, segsFwd: derFwd.segs, segsRev: derRev.segs, proposedFwd, proposedRev });
     els.diagramInfo.textContent = `${rows.length} Knoten · l_TP ${Math.round(lTP)} m · ${Ncyc} Umläufe`;
 
     els.tableBody.innerHTML = rows.map((r, i) => {
@@ -234,7 +244,7 @@
     }).join('');
   }
 
-  [els.dirSelect, els.cyclesInput, els.bandSelect].forEach(el => el.addEventListener('change', recompute));
+  [els.dirSelect, els.cyclesInput, els.bandSelect, els.vpFwdInput, els.vpRevInput].forEach(el => el.addEventListener('change', recompute));
 
   renderNodeList();
   recompute();

@@ -33,6 +33,12 @@
           <option value="off">Aus</option>
         </select>
       </span>
+      <span class="tb-field">V_p Hinrichtung (Vorschlag)
+        <input type="number" id="vpFwdInput" min="0" step="1" placeholder="km/h">
+      </span>
+      <span class="tb-field">V_p Gegenrichtung (Vorschlag)
+        <input type="number" id="vpRevInput" min="0" step="1" placeholder="km/h">
+      </span>
     </div>
   </div>
 
@@ -61,6 +67,8 @@
       <span class="item"><span class="swatch" style="background:var(--sig-red);height:3px;align-self:center;"></span>Sperrzeit</span>
       <span class="item"><span class="swatch" style="background:var(--accent)"></span>Progressionslinie</span>
       <span class="item"><span class="swatch" style="background:repeating-linear-gradient(90deg,var(--text-faint) 0 3px,transparent 3px 6px);height:2px;align-self:center;"></span>Teilpunkt-Raster</span>
+      <span class="item"><span class="swatch" style="background:rgba(211,161,37,.45);border:1px solid rgba(138,90,0,.7)"></span>Band bei V_p Hinrichtung (Vorschlag)</span>
+      <span class="item"><span class="swatch" style="background:rgba(43,108,163,.40);border:1px solid rgba(43,108,163,.75)"></span>Band bei V_p Gegenrichtung (Vorschlag)</span>
     </div>
     <div class="diagram-wrap" id="diagram"></div>
   </div>
