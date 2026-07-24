@@ -102,6 +102,11 @@ input[type=file]{display:none;}
 }
 .panel-head-info{font-family:var(--mono); font-size:10.5px; font-weight:400; text-transform:none; letter-spacing:normal;}
 
+.zoom-controls{display:flex; align-items:center; gap:4px; text-transform:none; letter-spacing:normal;}
+.zoom-controls .icon-btn{padding:2px 8px; font-size:12px; line-height:1.4;}
+.zoom-label{font-family:var(--mono); font-size:10.5px; font-weight:600; color:var(--text-muted); min-width:38px; text-align:center;}
+.zoom-hint{font-size:9.5px; color:var(--text-faint); font-weight:400;}
+
 /* KPI-Kacheln */
 .kpi-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:10px; padding:12px;}
 .kpi{border:1px solid var(--border); border-radius:3px; padding:9px 10px; background:var(--bg-panel-alt); display:flex; flex-direction:column; gap:3px;}

@@ -50,6 +50,13 @@
   <div class="panel" id="diagramPanel" style="display:none;">
     <div class="panel-head">
       <span>Zeit-Weg-Diagramm</span>
+      <span class="zoom-controls">
+        <button type="button" class="icon-btn" id="zoomOutBtn" title="Y-Achse verkleinern (mehr Umläufe sichtbar)">−</button>
+        <button type="button" class="icon-btn" id="zoomResetBtn" title="Zoom zurücksetzen">⟲</button>
+        <button type="button" class="icon-btn" id="zoomInBtn" title="Y-Achse vergrößern (mehr Detail je Umlauf)">+</button>
+        <span id="zoomLabel" class="zoom-label">100 %</span>
+        <span class="zoom-hint" title="Strg/Cmd + Mausrad über dem Diagramm zoomt ebenfalls">Strg+Mausrad</span>
+      </span>
       <span id="diagramInfo" class="panel-head-info"></span>
     </div>
     <div class="legend">
@@ -98,6 +105,21 @@
     </table>
     </div>
     <div class="hint-box" style="margin:0 12px 12px;">Zeile anklicken springt im Zeit-Weg-Diagramm oben zu diesem Umlauf.</div>
+  </div>
+
+  <div class="panel" id="umlaufIndexPanel" style="display:none;">
+    <div class="panel-head">Umlaufindex</div>
+    <div class="table-scroll cycle-jump-scroll">
+    <table class="stats-table">
+      <thead><tr>
+        <th>Umlauf</th>
+        <th>Verstrichen</th>
+        <th>Zeitpunkt</th>
+      </tr></thead>
+      <tbody id="umlaufIndexBody"></tbody>
+    </table>
+    </div>
+    <div class="hint-box" style="margin:0 12px 12px;">Durchgehende Nummerierung jedes Umlaufs ab Beginn der Aufzeichnung (Umlauf 0 = die ersten t_U Sekunden), unabhängig von Richtung oder realen Grünvorkommen - entspricht den "U{n}"-Beschriftungen am rechten Diagrammrand. Zeile anklicken springt zum jeweiligen Umlauf.</div>
   </div>
 
   <div class="panel" id="tablePanel" style="display:none;">

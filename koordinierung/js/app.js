@@ -1,7 +1,7 @@
 /* Koordinierung – UI-Verdrahtung */
 (function (App) {
   'use strict';
-  const { esc, fmtElapsed, fmtDateTimeShort } = App.utils;
+  const { esc, fmtElapsed, fmtDateTimeShort, clamp } = App.utils;
   const { deriveVp, teilpunktabstand, lageLabel, computeQualitativeBand, computeOptimumBand } = App.coordination;
   const { renderDiagram } = App.diagram;
   const state = App.state;
@@ -11,6 +11,17 @@
   // heraus, ohne dass der Diagramm-Code selbst vom App-Code wissen muss.
   let diagramApi = null;
   let globalTMinRef = 0;
+
+  // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
+  // weiter heraus. Wird als Faktor an renderDiagram gereicht (dort mit der
+  // Basis-Pixel/Sekunde-Rate multipliziert) - Wert bleibt über Neu-Rendern
+  // hinweg erhalten (Modul-Variable, nicht Teil des Diagramm-DOM-Zustands).
+  let zoomLevel = 1;
+  const ZOOM_MIN = 0.1, ZOOM_MAX = 30, ZOOM_STEP = 1.4;
+  function setZoom(next) {
+    zoomLevel = clamp(next, ZOOM_MIN, ZOOM_MAX);
+    recompute();
+  }
 
   const els = {
     btnAddFile: document.getElementById('btnAddFile'),
@@ -34,6 +45,12 @@
     statsBody: document.getElementById('statsBody'),
     cycleJumpPanel: document.getElementById('cycleJumpPanel'),
     cycleJumpBody: document.getElementById('cycleJumpBody'),
+    umlaufIndexPanel: document.getElementById('umlaufIndexPanel'),
+    umlaufIndexBody: document.getElementById('umlaufIndexBody'),
+    zoomOutBtn: document.getElementById('zoomOutBtn'),
+    zoomResetBtn: document.getElementById('zoomResetBtn'),
+    zoomInBtn: document.getElementById('zoomInBtn'),
+    zoomLabel: document.getElementById('zoomLabel'),
   };
 
   function showError(msg) {
@@ -55,6 +72,7 @@
     els.tablePanel.style.display = 'none';
     els.statsPanel.style.display = 'none';
     els.cycleJumpPanel.style.display = 'none';
+    els.umlaufIndexPanel.style.display = 'none';
   }
 
   /* ---------------- Datei-Import ---------------- */
@@ -395,8 +413,9 @@
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
-    diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, zoomLevel, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
     globalTMinRef = globalTMin;
+    els.zoomLabel.textContent = Math.round(zoomLevel * 100) + ' %';
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
     if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
@@ -406,6 +425,7 @@
     /* ---- Koordinationsstatistik ---- */
     renderStats(resHin, resRev);
     renderCycleJump(resHin, resRev);
+    renderUmlaufIndex(TU, globalTMin, globalTMax);
 
     /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
     const nodes = state.intersections;
@@ -502,6 +522,74 @@
     });
     els.cycleJumpBody.innerHTML = rows.join('');
   }
+
+  /* ---------------- Umlaufindex ---------------- */
+  // Durchnummeriert JEDEN Umlauf der gesamten (Richtungs-unabhängigen)
+  // Zeitachse ab globalTMin - Umlauf 0 = [globalTMin, globalTMin+TU), Umlauf
+  // 1 das nächste TU-Intervall usw. (siehe "U{n}"-Beschriftung rechts im
+  // Diagramm). Dient als reine Zeit-Referenz (nicht an ein reales
+  // Grünvorkommen gebunden wie die Umlauf-Sprungliste), damit sich ein
+  // beliebiger Punkt der Aufzeichnung eindeutig benennen und wiederfinden
+  // lässt. Zeile anklicken springt an den Anfang dieses Umlaufs.
+  const UMLAUF_INDEX_MAX = 1000;
+  function renderUmlaufIndex(TU, globalTMin, globalTMax) {
+    if (!TU || !(globalTMax > globalTMin)) { els.umlaufIndexPanel.style.display = 'none'; return; }
+    els.umlaufIndexPanel.style.display = 'block';
+    const cycleMs = TU * 1000;
+    const totalCycles = Math.ceil((globalTMax - globalTMin) / cycleMs);
+    const shown = Math.min(totalCycles, UMLAUF_INDEX_MAX);
+    const rows = [];
+    for (let k = 0; k < shown; k++) {
+      const start = globalTMin + k * cycleMs;
+      const end = Math.min(start + cycleMs, globalTMax);
+      rows.push(`<tr class="cycle-jump-row" data-t="${start}" tabindex="0">
+        <td>Umlauf ${k}</td>
+        <td>${esc(fmtElapsed(start - globalTMin))} – ${esc(fmtElapsed(end - globalTMin))}</td>
+        <td>${esc(fmtDateTimeShort(start))} – ${esc(fmtDateTimeShort(end))}</td>
+      </tr>`);
+    }
+    if (totalCycles > shown) {
+      rows.push(`<tr><td colspan="3" style="color:var(--text-faint);font-style:italic;">… ${totalCycles - shown} weitere Umläufe ausgeblendet</td></tr>`);
+    }
+    els.umlaufIndexBody.innerHTML = rows.join('');
+  }
+
+  els.umlaufIndexBody.addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-t]');
+    if (!row || !diagramApi) return;
+    diagramApi.scrollToTime(Number(row.dataset.t));
+  });
+  els.umlaufIndexBody.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('tr[data-t]');
+    if (!row || !diagramApi) return;
+    e.preventDefault();
+    diagramApi.scrollToTime(Number(row.dataset.t));
+  });
+
+  /* ---------------- Y-Achsen-Zoom ---------------- */
+  els.zoomOutBtn.addEventListener('click', () => setZoom(zoomLevel / ZOOM_STEP));
+  els.zoomInBtn.addEventListener('click', () => setZoom(zoomLevel * ZOOM_STEP));
+  els.zoomResetBtn.addEventListener('click', () => setZoom(1));
+
+  // Strg/Cmd+Mausrad über dem Diagramm zoomt interaktiv in die Zeitachse
+  // hinein/heraus (wie in Karten-/Grafikwerkzeugen üblich) - normales
+  // Scrollen (ohne Strg) bleibt unverändert das Scrollen/Blättern durch die
+  // Historie. Mehrere Wheel-Events pro Geste werden gesammelt und erst im
+  // nächsten Frame in EINE Neuberechnung umgesetzt (kein Reflow pro Tick).
+  let zoomPendingDelta = 0, zoomRaf = null;
+  els.diagram.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    zoomPendingDelta += e.deltaY;
+    if (zoomRaf) return;
+    zoomRaf = requestAnimationFrame(() => {
+      const factor = Math.pow(1.0018, -zoomPendingDelta);
+      zoomPendingDelta = 0;
+      zoomRaf = null;
+      setZoom(zoomLevel * factor);
+    });
+  }, { passive: false });
 
   els.cycleJumpBody.addEventListener('click', (e) => {
     const row = e.target.closest('tr[data-t]');

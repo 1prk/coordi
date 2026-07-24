@@ -30,7 +30,7 @@
   // dir: {rows, lTP, qualitativeBand, optimumBand, bandFill, bandStroke,
   //       tag: 'H'|'R', tagColor, gridColor} oder null
   function renderDiagram(container, o) {
-    const { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin, rev } = o;
+    const { TU, showQualitative, showOptimum, showTimestamp, zoomLevel, globalTMin, globalTMax, hin, rev } = o;
     const dirs = [hin, rev].filter(Boolean);
     if (dirs.length === 0 || !(globalTMax > globalTMin)) { container.innerHTML = ''; return null; }
 
@@ -55,9 +55,13 @@
 
     // Zoomstufe an der Umlaufzeit ausgerichtet, nicht an der Gesamtdauer -
     // mindestens ~3 Umläufe sollen ohne Scrollen im sichtbaren Bereich
-    // Platz haben, egal wie lang die Aufzeichnung insgesamt ist.
+    // Platz haben, egal wie lang die Aufzeichnung insgesamt ist. `zoomLevel`
+    // (>0, Default 1) skaliert diese Basis-Zoomstufe interaktiv (Zoom-Buttons
+    // / Strg+Mausrad in app.js) - 1 = Basisstufe (~3 Umläufe sichtbar), >1
+    // näher heran (weniger Umläufe, mehr Detail), <1 weiter heraus.
     const VIEWPORT_PX = 560, CYCLES_VISIBLE = 3;
-    const pxPerSec = Math.min(8, Math.max(0.02, VIEWPORT_PX / (CYCLES_VISIBLE * TU)));
+    const zoom = zoomLevel && zoomLevel > 0 ? zoomLevel : 1;
+    const pxPerSec = Math.min(60, Math.max(0.01, (VIEWPORT_PX / (CYCLES_VISIBLE * TU)) * zoom));
     const totalSec = (globalTMax - globalTMin) / 1000;
     const plotH = totalSec * pxPerSec;
     const W = mL + plotW + mR, H = mT + plotH;
@@ -105,15 +109,17 @@
     // als Bruchteil von TU gewählt, damit die Linien exakt auf TX-Werten
     // liegen; der reale Zeitstempel kann optional zusätzlich angezeigt
     // werden (Checkbox "Zeitstempel anzeigen").
+    // Alle Gitterlinien sind ab globalTMin verankert (nicht an der rohen
+    // Unix-Epoche) - so beginnt "Umlauf 0"/TX 0 exakt an der verstrichenen
+    // Zeit 00:00:00 (unterer Rand), wie im Umlaufindex referenziert.
     const gridStepS = TU ? pickTxGridStep(TU, pxPerSec, showTimestamp ? 54 : 30) : 60;
     const gridStepMs = gridStepS * 1000;
     const cycleMs = TU ? TU * 1000 : 0;
-    const firstGrid = Math.ceil(globalTMin / gridStepMs) * gridStepMs;
-    for (let t = firstGrid; t <= globalTMax; t += gridStepMs) {
+    for (let t = globalTMin; t <= globalTMax; t += gridStepMs) {
       // Umlaufgrenze (Vielfaches von TU) wird unten als eigene, hervorgeho-
       // bene Linie mit Label "TX {TU}" (Umlaufende) gezeichnet statt hier
       // als normale Gitterlinie mit Label "TX 0" - Doppelung vermeiden.
-      if (cycleMs && Math.abs(t % cycleMs) < 1) continue;
+      if (cycleMs && Math.abs((t - globalTMin) % cycleMs) < 1) continue;
       const y = Y(t);
       const tx = TU ? Math.round((((t - globalTMin) / 1000) % TU + TU) % TU) : null;
       svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
@@ -125,14 +131,18 @@
       }
     }
 
-    // Umlaufende-Linien: an jedem Vielfachen von TU - NICHT als TX 0 (Beginn
-    // des nächsten Umlaufs), sondern als TX {TU} (Ende des laufenden
-    // Umlaufs) beschriftet - deutlich abgesetzt (durchgezogen, kräftiger)
-    // vom übrigen gestrichelten Raster, damit Umlaufgrenzen beim Scrollen
-    // durch die Historie klar erkennbar bleiben.
+    // Umlaufende-Linien: an jedem Vielfachen von TU ab globalTMin - NICHT
+    // als TX 0 (Beginn des nächsten Umlaufs), sondern als TX {TU} (Ende des
+    // laufenden Umlaufs) beschriftet - deutlich abgesetzt (durchgezogen,
+    // kräftiger) vom übrigen gestrichelten Raster, damit Umlaufgrenzen beim
+    // Scrollen durch die Historie klar erkennbar bleiben. Zusätzlich trägt
+    // jeder Umlauf (zwischen zwei solchen Grenzen) einen fortlaufenden
+    // Index "U{n}" - rechts am Rand, mittig im jeweiligen Umlauf platziert -
+    // der sich 1:1 auf den Umlaufindex (Tabelle unterhalb des Diagramms)
+    // bezieht: Umlauf 0 = [globalTMin, globalTMin+TU), Umlauf 1 = das
+    // nächste TU-Intervall usw.
     if (cycleMs) {
-      const firstCycleEnd = Math.ceil(globalTMin / cycleMs) * cycleMs;
-      for (let t = firstCycleEnd; t <= globalTMax; t += cycleMs) {
+      for (let t = globalTMin + cycleMs; t <= globalTMax; t += cycleMs) {
         const y = Y(t);
         svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border-strong)" stroke-width="1.4"/>`;
         if (showTimestamp) {
@@ -141,6 +151,13 @@
         } else {
           svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" font-weight="700" fill="var(--text-muted)">TX ${TU}</text>`;
         }
+      }
+      const totalCycles = Math.ceil((globalTMax - globalTMin) / cycleMs);
+      for (let k = 0; k < totalCycles; k++) {
+        const tMid = globalTMin + (k + 0.5) * cycleMs;
+        if (tMid > globalTMax) break;
+        const y = Y(tMid);
+        svg += `<text x="${(mL + plotW + 4).toFixed(1)}" y="${(y + 3).toFixed(1)}" font-size="9" font-weight="700" fill="var(--accent)">U${k}</text>`;
       }
     }
     const axisTitle = showTimestamp
