@@ -2,20 +2,28 @@
 (function (App) {
   'use strict';
   const { uid } = App.utils;
-  const { parseOcitText, buildSegments, computeGlobalTU, computeSignalplanRow } = App.parser;
+  const { parseOcitText, buildSegments, computeGlobalTU, computeSignalplanRow, computeSplPeriods } = App.parser;
 
   const intersections = [];
 
   // Baut aus Rohtext (eine CSV-Datei = ein Knoten) einen Zustandseintrag.
+  // Neben dem Gesamt-Mitschnitt-Plan (planByCol) bleiben times/splValues/
+  // cycleStarts sowie die Segmente je Spalte (segsByCol) erhalten, damit sich
+  // ein Plan später auch auf ein Zeitfenster (z. B. den Geltungszeitraum
+  // eines einzelnen Signalzeitenplans) einschränken lässt - siehe
+  // app.js/planForNode.
   function buildIntersection(fileName, text) {
     const parsed = parseOcitText(text);
     const TU = computeGlobalTU(parsed.cycleStarts);
+    const segsByCol = new Map();
     const planByCol = new Map();
     parsed.columns.forEach(col => {
       const segs = buildSegments(parsed.times, parsed.seriesByCol.get(col.index));
+      segsByCol.set(col.index, segs);
       const plan = TU ? computeSignalplanRow(segs, parsed.cycleStarts, TU) : null;
       planByCol.set(col.index, plan);
     });
+    const splPeriods = computeSplPeriods(parsed.times, parsed.splValues);
     const defaultCol = parsed.columns.find(c => planByCol.get(c.index))?.index ?? null;
     return {
       id: uid(),
@@ -24,6 +32,10 @@
       knotenNr: parsed.knotenNr,
       columns: parsed.columns,
       planByCol,
+      segsByCol,
+      times: parsed.times,
+      cycleStarts: parsed.cycleStarts,
+      splPeriods,
       TU,
       mainColHin: defaultCol,
       mainColRev: defaultCol,

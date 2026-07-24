@@ -207,11 +207,16 @@
   }
 
   // Typische (Median-)Werte An/Ab/TF einer Signalgruppe, relativ zur
-  // System-Umlaufzeit TU und den TX=0-Umlaufgrenzen.
-  function computeSignalplanRow(segs, cycleStarts, TU) {
+  // System-Umlaufzeit TU und den TX=0-Umlaufgrenzen. optRange (optional)
+  // beschränkt die Auswertung auf ein Zeitfenster [start,end) - z. B. auf den
+  // Geltungszeitraum eines einzelnen Signalzeitenplans - ohne cycleStarts
+  // einzuschränken (Umlaufgrenzen bleiben über die gesamte Aufzeichnung
+  // gültig, unabhängig vom Fenster).
+  function computeSignalplanRow(segs, cycleStarts, TU, optRange) {
     const ans = [], abs_ = [], tfs = [];
     segs.forEach((g) => {
       if (g.cat !== 'GRUEN') return;
+      if (optRange && (g.start < optRange.start || g.start >= optRange.end)) return;
       const csStart = findEnclosingCycleStart(g.start, cycleStarts);
       const csEnd = findEnclosingCycleStart(g.end, cycleStarts);
       if (csStart == null || csEnd == null) return;
@@ -227,8 +232,27 @@
     };
   }
 
+  // Zeitpunkte, an denen sich der Signalzeitenplan (SPL/SP-Spalte) ändert -
+  // liefert daraus zusammenhängende Geltungszeiträume je Plan (für die
+  // Zeitpunkt-Navigation: "an welchem SPL war wann welcher Knoten aktiv").
+  function computeSplPeriods(times, splValues) {
+    if (!times.length) return [];
+    const periods = [];
+    let curSpl = splValues[0] || '(unbekannt)';
+    let curStart = times[0];
+    for (let i = 1; i < times.length; i++) {
+      const v = splValues[i] || curSpl;
+      if (v !== curSpl) {
+        periods.push({ spl: curSpl, start: curStart, end: times[i] });
+        curSpl = v; curStart = times[i];
+      }
+    }
+    periods.push({ spl: curSpl, start: curStart, end: times[times.length - 1] + estimateStep(times) });
+    return periods;
+  }
+
   App.parser = {
     parseOcitText, estimateStep, categorizeSgRaw, buildSegments,
-    computeGlobalTU, computeSignalplanRow, findEnclosingCycleStart
+    computeGlobalTU, computeSignalplanRow, findEnclosingCycleStart, computeSplPeriods
   };
 })(window.App = window.App || {});

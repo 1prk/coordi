@@ -1,8 +1,9 @@
 /* Koordinierung – UI-Verdrahtung */
 (function (App) {
   'use strict';
-  const { esc, clamp } = App.utils;
+  const { esc, clamp, fmtDateTimeShort } = App.utils;
   const { deriveVp, teilpunktabstand, lageLabel, computeProposedBand } = App.coordination;
+  const { computeSignalplanRow } = App.parser;
   const { renderDiagram } = App.diagram;
   const state = App.state;
 
@@ -16,6 +17,9 @@
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
     hintBox: document.getElementById('hintBox'),
+    checkpointPanel: document.getElementById('checkpointPanel'),
+    checkpointInfo: document.getElementById('checkpointInfo'),
+    checkpointRow: document.getElementById('checkpointRow'),
     kpiPanel: document.getElementById('kpiPanel'),
     kpiGrid: document.getElementById('kpiGrid'),
     diagramPanel: document.getElementById('diagramPanel'),
@@ -24,6 +28,10 @@
     tablePanel: document.getElementById('tablePanel'),
     tableBody: document.getElementById('tableBody'),
   };
+
+  // Aktuell ausgewählter Zeitpunkt (Checkpoint) - null = gesamter Mitschnitt
+  // je Knoten (aggregierter Plan, wie bisher).
+  let activeCheckpoint = null;
 
   function showError(msg) {
     els.errorBox.textContent = msg;
@@ -60,6 +68,7 @@
       }
     }
     renderNodeList();
+    renderCheckpoints();
     recompute();
   });
 
@@ -154,12 +163,107 @@
       if (vpRevInput) vpRevInput.addEventListener('change', (e) => { node.vpRev = Number(e.target.value) || 0; recompute(); });
       const revOffsetInput = card.querySelector('.node-rev-offset');
       if (revOffsetInput) revOffsetInput.addEventListener('change', (e) => { node.revOffset = Number(e.target.value) || 0; recompute(); });
-      card.querySelector('.node-remove').addEventListener('click', () => { state.removeIntersection(id); renderNodeList(); recompute(); });
+      card.querySelector('.node-remove').addEventListener('click', () => { state.removeIntersection(id); renderNodeList(); renderCheckpoints(); recompute(); });
       const upBtn = card.querySelector('.node-up');
       const downBtn = card.querySelector('.node-down');
       if (upBtn) upBtn.addEventListener('click', () => { state.moveIntersection(id, -1); renderNodeList(); recompute(); });
       if (downBtn) downBtn.addEventListener('click', () => { state.moveIntersection(id, 1); renderNodeList(); recompute(); });
     });
+  }
+
+  /* ---------------- Zeitpunkte (Checkpoints) ---------------- */
+  // Ein Checkpoint markiert einen Zeitpunkt, an dem sich bei MINDESTENS einem
+  // Knoten der Signalzeitenplan geändert hat (SPL/SP-Spalte) - dient dem
+  // Durchblättern der Koordinierung über die Zeit statt nur des einen
+  // Median-Plans über den gesamten Mitschnitt. Zeitpunkte innerhalb von 2 Min
+  // werden zu einem gemeinsamen Checkpoint zusammengefasst (mehrere Knoten
+  // wechseln ihr Programm selten exakt zeitgleich).
+  const CHECKPOINT_MERGE_MS = 120000;
+
+  function buildCheckpoints() {
+    const nodes = state.intersections;
+    const raw = [];
+    nodes.forEach(n => (n.splPeriods || []).forEach(p => raw.push({ time: p.start, spl: p.spl })));
+    raw.sort((a, b) => a.time - b.time);
+    const merged = [];
+    raw.forEach(r => {
+      const last = merged[merged.length - 1];
+      if (last && (r.time - last.time) <= CHECKPOINT_MERGE_MS) {
+        last.items.push(r);
+      } else {
+        merged.push({ time: r.time, items: [r] });
+      }
+    });
+    return merged.map(m => {
+      const splSet = new Set(m.items.map(it => it.spl));
+      return { time: m.time, spl: splSet.size === 1 ? [...splSet][0] : null };
+    });
+  }
+
+  // Deckt jeder geladene Knoten (zeitlich) den Checkpoint ab? Nur wenn JA für
+  // alle Knoten lässt sich die Koordinierung an diesem Zeitpunkt wirklich
+  // prüfen - unterschiedliche Aufzeichnungszeiträume (andere Tage/Uhrzeiten)
+  // sind sonst nicht vergleichbar.
+  function checkpointCoversAll(cp) {
+    const nodes = state.intersections;
+    return nodes.every(n => n.times.length && cp.time >= n.times[0] && cp.time <= n.times[n.times.length - 1]);
+  }
+
+  function renderCheckpoints() {
+    const nodes = state.intersections;
+    if (nodes.length === 0) { els.checkpointPanel.style.display = 'none'; activeCheckpoint = null; return; }
+    const checkpoints = buildCheckpoints();
+    if (checkpoints.length === 0) { els.checkpointPanel.style.display = 'none'; activeCheckpoint = null; return; }
+    els.checkpointPanel.style.display = 'block';
+
+    // Falls der bisher aktive Checkpoint nach einer Änderung (Datei entfernt
+    // o. Ä.) nicht mehr existiert, zurück auf "Gesamter Mitschnitt".
+    if (activeCheckpoint && !checkpoints.some(c => c.time === activeCheckpoint.time)) activeCheckpoint = null;
+
+    const totalMsgs = [];
+    let chipsHtml = `<div class="checkpoint-chip${!activeCheckpoint ? ' active' : ''}" data-time="">
+      <span class="cp-time">Gesamter Mitschnitt</span>
+      <span class="cp-spl">Median über alles</span>
+    </div>`;
+    chipsHtml += checkpoints.map(cp => {
+      const covers = checkpointCoversAll(cp);
+      const isActive = activeCheckpoint && activeCheckpoint.time === cp.time;
+      return `<div class="checkpoint-chip${isActive ? ' active' : ''}${covers ? '' : ' warn'}" data-time="${cp.time}" title="${covers ? '' : 'Nicht alle Knoten decken diesen Zeitpunkt ab'}">
+        <span class="cp-time">${fmtDateTimeShort(cp.time)}</span>
+        <span class="cp-spl">${cp.spl ? 'SPL ' + esc(cp.spl) : 'SPL uneinheitlich'}${covers ? '' : ' ⚠'}</span>
+      </div>`;
+    }).join('');
+    els.checkpointRow.innerHTML = chipsHtml;
+
+    els.checkpointRow.querySelectorAll('.checkpoint-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const t = chip.dataset.time;
+        activeCheckpoint = t ? checkpoints.find(c => c.time === Number(t)) : null;
+        renderCheckpoints();
+        recompute();
+      });
+    });
+
+    els.checkpointInfo.textContent = activeCheckpoint
+      ? `${checkpoints.length} Zeitpunkte · aktuell: ${fmtDateTimeShort(activeCheckpoint.time)}`
+      : `${checkpoints.length} Zeitpunkte verfügbar`;
+  }
+
+  // Liefert den Plan (An/Ab/TF) einer Spalte - über den gesamten Mitschnitt
+  // gemittelt (kein Checkpoint aktiv) oder auf den Geltungszeitraum des an
+  // diesem Knoten zum Checkpoint-Zeitpunkt aktiven Signalzeitenplans
+  // beschränkt. Liegt der Checkpoint außerhalb des Aufzeichnungszeitraums
+  // dieses Knotens, gibt es keinen validierbaren Plan (null) - der Knoten
+  // fällt für diesen Zeitpunkt aus der Berechnung.
+  function planForNode(node, colIndex) {
+    if (colIndex == null) return null;
+    if (!activeCheckpoint) return node.planByCol.get(colIndex) || null;
+    const t = activeCheckpoint.time;
+    if (!node.times.length || t < node.times[0] || t > node.times[node.times.length - 1]) return null;
+    const period = (node.splPeriods || []).find(p => t >= p.start && t < p.end) || node.splPeriods[node.splPeriods.length - 1];
+    const segs = node.segsByCol.get(colIndex);
+    if (!segs || !node.TU) return null;
+    return computeSignalplanRow(segs, node.cycleStarts, node.TU, { start: period.start, end: period.end });
   }
 
   /* ---------------- Berechnung ---------------- */
@@ -200,7 +304,7 @@
 
     const pushRow = (n, station) => {
       const col = n[colField];
-      const plan = col != null ? n.planByCol.get(col) : null;
+      const plan = planForNode(n, col);
       if (!plan || !n.TU) return;
       tus.push(n.TU);
       if (TUref == null) TUref = n.TU;
@@ -281,13 +385,18 @@
     const resHin = computeDirection('Hin', 'fwd', hinEnabled);
     const resRev = computeDirection('Rev', 'rev', revEnabled);
 
+    const msgs = [];
+    if (activeCheckpoint && !checkpointCoversAll(activeCheckpoint)) {
+      msgs.push(`Zeitpunkt ${fmtDateTimeShort(activeCheckpoint.time)}: nicht alle Knoten decken diesen Zeitpunkt zeitlich ab – die Koordinierung ist dort nicht vollständig validierbar (Knoten ohne Abdeckung fallen aus der Berechnung).`);
+    }
+
     if (!resHin.ok && !resRev.ok) {
       hidePanels();
-      showHint('Mindestens zwei Knoten mit gültigem Hauptsignal und einem Abstand größer 0 (je Richtung) auswählen.', true);
+      msgs.push('Mindestens zwei Knoten mit gültigem Hauptsignal und einem Abstand größer 0 (je Richtung) auswählen.');
+      showHint(msgs.join(' '), true);
       return;
     }
 
-    const msgs = [];
     [['Hinrichtung', resHin], ['Gegenrichtung', resRev]].forEach(([label, res]) => {
       if (!res.ok) return;
       const uniqueTus = [...new Set(res.tus)];
@@ -349,6 +458,7 @@
       rev: toDirGeom(resRev, 'R', '#2b6ca3', 'rgba(43,108,163,0.6)', 'rgba(43,108,163,0.30)', 'rgba(43,108,163,0.75)')
     });
     const parts = [];
+    if (activeCheckpoint) parts.push(fmtDateTimeShort(activeCheckpoint.time));
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
     if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
     els.diagramInfo.textContent = `${parts.join(' · ')} · ${Ncyc} Umläufe`;
@@ -382,5 +492,6 @@
   });
 
   renderNodeList();
+  renderCheckpoints();
   recompute();
 })(window.App = window.App || {});

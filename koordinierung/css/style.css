@@ -122,11 +122,29 @@ input[type=file]{display:none;}
   position:absolute; transform:translateX(-50%); white-space:nowrap;
   font-family:var(--mono); font-size:10px; font-weight:700;
 }
+.diagram-sticky-footer{
+  position:sticky; bottom:0; left:0; z-index:4;
+  border-top:1px solid var(--border); box-shadow:0 -1px 0 var(--border);
+}
+.diagram-sticky-footer svg{display:block; margin-top:0;}
 .diagram-tooltip{
   position:absolute; display:none; pointer-events:none; z-index:8;
   background:var(--text); color:#fff; font-family:var(--mono); font-size:10.5px;
   padding:3px 7px; border-radius:2px; white-space:nowrap; box-shadow:0 2px 6px rgba(0,0,0,.3);
 }
+.checkpoint-row{display:flex; gap:6px; flex-wrap:wrap; padding:10px 12px;}
+.checkpoint-chip{
+  display:flex; flex-direction:column; align-items:flex-start; gap:1px;
+  border:1px solid var(--border-strong); border-radius:2px; background:var(--bg-panel);
+  padding:5px 9px; cursor:pointer; font-family:var(--mono); min-width:84px;
+}
+.checkpoint-chip:hover{border-color:var(--accent); background:var(--accent-bg);}
+.checkpoint-chip.active{border-color:var(--accent); background:var(--accent-bg); box-shadow:inset 0 0 0 1px var(--accent);}
+.checkpoint-chip .cp-time{font-size:12px; font-weight:700; color:var(--text);}
+.checkpoint-chip .cp-spl{font-size:10px; color:var(--text-muted);}
+.checkpoint-chip.warn{border-color:var(--sig-yellow);}
+.checkpoint-chip.warn .cp-spl{color:#8a5a00;}
+
 .legend{display:flex; gap:14px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--border); background:var(--bg-panel-alt);}
 .legend .item{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted);}
 .swatch{width:11px; height:11px; border:1px solid rgba(0,0,0,.25); display:inline-block;}

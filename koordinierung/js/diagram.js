@@ -23,7 +23,7 @@
     const pxPerSec = Math.max(1.6, 150 / TU);
     const Ttot = Ncyc * TU;
     const plotH = Ttot * pxPerSec;
-    const W = mL + plotW + mR, H = mT + plotH + mB;
+    const W = mL + plotW + mR, H = mT + plotH;
     const sx = corridor > 0 ? plotW / corridor : 0;
     const X = s => mL + (s - sMin) * sx;
     const Y = t => mT + plotH - t * pxPerSec;
@@ -84,8 +84,7 @@
       svg += `<g clip-path="${clip}">${propSvg}</g>`;
     });
 
-    dirs.forEach((d, di) => {
-      const labelY1 = mT + plotH + 18 + di * 26;
+    dirs.forEach(d => {
       d.rows.forEach(r => {
         const x = X(r.station);
         svg += `<line x1="${x.toFixed(1)}" y1="${mT}" x2="${x.toFixed(1)}" y2="${mT + plotH}" stroke="var(--sig-red)" stroke-width="2.5"/>`;
@@ -102,35 +101,9 @@
           }
         }
         svg += `<g clip-path="${clip}">${overlay}</g>`;
-        svg += `<text x="${x.toFixed(1)}" y="${labelY1}" text-anchor="middle" font-size="10" font-weight="700" fill="${d.tagColor}">${d.tag} ${esc(r.name)}</text>`;
       });
     });
 
-    // Maßketten statt absoluter Stationsangaben: je Richtung ein Pfeil pro
-    // Abschnitt (Hin -> rechts, Rück -> links, entsprechend der Fahrtrichtung),
-    // beschriftet mit dem tatsächlichen Abschnittsabstand. Der erste Hin-
-    // Knoten bleibt der einzige Bezug zu einer absoluten Station (Basis-
-    // Station im Werkzeugleisten-Feld).
-    dirs.forEach((d, di) => {
-      const y = mT + plotH + 32 + di * 26;
-      const pointRight = d.tag === 'H';
-      const ah = 4;
-      for (let i = 0; i < d.rows.length - 1; i++) {
-        const a = d.rows[i], b = d.rows[i + 1];
-        const xA = X(a.station), xB = X(b.station);
-        const dist = Math.round(b.station - a.station);
-        const xLeft = Math.min(xA, xB), xRight = Math.max(xA, xB);
-        const midX = (xLeft + xRight) / 2;
-        svg += `<line x1="${xLeft.toFixed(1)}" y1="${y}" x2="${xRight.toFixed(1)}" y2="${y}" stroke="${d.tagColor}" stroke-width="1"/>`;
-        svg += pointRight
-          ? `<polyline points="${(xRight - ah).toFixed(1)},${y - 3} ${xRight.toFixed(1)},${y} ${(xRight - ah).toFixed(1)},${y + 3}" fill="none" stroke="${d.tagColor}" stroke-width="1"/>`
-          : `<polyline points="${(xLeft + ah).toFixed(1)},${y - 3} ${xLeft.toFixed(1)},${y} ${(xLeft + ah).toFixed(1)},${y + 3}" fill="none" stroke="${d.tagColor}" stroke-width="1"/>`;
-        svg += `<rect x="${(midX - 16).toFixed(1)}" y="${(y - 7).toFixed(1)}" width="32" height="11" fill="var(--bg-panel)"/>`;
-        svg += `<text x="${midX.toFixed(1)}" y="${(y + 2).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${d.tagColor}">${dist} m</text>`;
-      }
-    });
-
-    svg += `<text x="${mL + plotW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Weg s [m]</text>`;
     svg += `</svg>`;
 
     // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung - bleibt
@@ -146,7 +119,46 @@
     });
     header += `</div>`;
 
-    container.innerHTML = header + svg + `<div class="diagram-tooltip"></div>`;
+    // Sticky Fußzeile (x-Achse): Knotennamen + Maßketten statt absoluter
+    // Stationsangaben - je Richtung ein Pfeil pro Abschnitt (Hin -> rechts,
+    // Rück -> links, entsprechend der Fahrtrichtung), beschriftet mit dem
+    // tatsächlichen Abschnittsabstand. Der erste Hin-Knoten bleibt der
+    // einzige Bezug zu einer absoluten Station (Basis-Station im
+    // Werkzeugleisten-Feld). Bleibt wie die Kopfzeile beim vertikalen
+    // Scrollen sichtbar (position:sticky; bottom:0).
+    let footer = `<svg class="diagram-footer-svg" width="${W}" height="${mB}" viewBox="0 0 ${W} ${mB}" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, ui-monospace, monospace">`;
+    footer += `<rect x="0" y="0" width="${W}" height="${mB}" fill="var(--bg-panel)"/>`;
+    dirs.forEach((d, di) => {
+      const labelY = 18 + di * 26;
+      d.rows.forEach(r => {
+        const x = X(r.station);
+        footer += `<text x="${x.toFixed(1)}" y="${labelY}" text-anchor="middle" font-size="10" font-weight="700" fill="${d.tagColor}">${d.tag} ${esc(r.name)}</text>`;
+      });
+    });
+    dirs.forEach((d, di) => {
+      const y = 32 + di * 26;
+      const pointRight = d.tag === 'H';
+      const ah = 4;
+      for (let i = 0; i < d.rows.length - 1; i++) {
+        const a = d.rows[i], b = d.rows[i + 1];
+        const xA = X(a.station), xB = X(b.station);
+        const dist = Math.round(b.station - a.station);
+        const xLeft = Math.min(xA, xB), xRight = Math.max(xA, xB);
+        const midX = (xLeft + xRight) / 2;
+        footer += `<line x1="${xLeft.toFixed(1)}" y1="${y}" x2="${xRight.toFixed(1)}" y2="${y}" stroke="${d.tagColor}" stroke-width="1"/>`;
+        footer += pointRight
+          ? `<polyline points="${(xRight - ah).toFixed(1)},${y - 3} ${xRight.toFixed(1)},${y} ${(xRight - ah).toFixed(1)},${y + 3}" fill="none" stroke="${d.tagColor}" stroke-width="1"/>`
+          : `<polyline points="${(xLeft + ah).toFixed(1)},${y - 3} ${xLeft.toFixed(1)},${y} ${(xLeft + ah).toFixed(1)},${y + 3}" fill="none" stroke="${d.tagColor}" stroke-width="1"/>`;
+        footer += `<rect x="${(midX - 16).toFixed(1)}" y="${(y - 7).toFixed(1)}" width="32" height="11" fill="var(--bg-panel)"/>`;
+        footer += `<text x="${midX.toFixed(1)}" y="${(y + 2).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${d.tagColor}">${dist} m</text>`;
+      }
+    });
+    footer += `<text x="${mL + plotW / 2}" y="${mB - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Weg s [m]</text>`;
+    footer += `</svg>`;
+
+    container.innerHTML = header + svg
+      + `<div class="diagram-sticky-footer" style="width:${W}px;">${footer}</div>`
+      + `<div class="diagram-tooltip"></div>`;
     container.scrollTop = container.scrollHeight;
 
     // Snappy Tooltip: zeigt beim Bewegen der Maus die volle Sekunde (inkl.
