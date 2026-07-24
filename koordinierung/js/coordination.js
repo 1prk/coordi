@@ -210,6 +210,36 @@
     const tauLastMs = tau[tau.length - 1] * 1000;
     const survivorAnchors = finalStage.map(iv => ({ origin: iv.origin, s0: iv.start - tauLastMs }));
 
+    // Diagnose: minTf kommt vom (Median-)Plan-tf des schmalsten Knotens im
+    // Streckenzug (rows[].tf, aus computeSignalplanRow) - NICHT von der
+    // konkreten realen Grünzeit eines einzelnen Vorkommens. Ein Knoten kann
+    // daher gelegentlich ein reales Grünsegment haben, dessen tatsächliche
+    // Breite vom Median abweicht; validStartsFor() filtert solche Segmente
+    // (falls zu kurz) bereits korrekt heraus. Zur Nachvollziehbarkeit hier
+    // protokolliert, welcher Knoten den Engpass stellt.
+    const bottleneckNode = ordered.find(r => r.tf === minTf);
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug(`[Optimum] minTf=${minTf}s (Engpass: ${bottleneckNode ? bottleneckNode.name : '?'}, Plan-TF) für Streckenzug ${ordered.map(r => r.name).join(' -> ')}`);
+    }
+
+    // Laufzeit-Assert: jedes gezeichnete Fenster MUSS innerhalb eines realen
+    // Grünsegments der jeweiligen Station liegen (per Definition des
+    // Optimum-Bands - siehe Kommentar oben). Verletzung wird mit Knoten und
+    // Zeitstempel geloggt, damit sich eine trotzdem auftretende Abweichung
+    // (z. B. ein Rundungs-/Umlaufgrenzen-Sonderfall) in Sekunden statt durch
+    // Rätselraten lokalisieren lässt.
+    function assertWithinRealGreen(node, start, end, label) {
+      const ok = (node.greenSegs || []).some(g => start >= g.start && end <= g.end);
+      if (!ok && typeof console !== 'undefined') {
+        console.warn(
+          `[Optimum] AUSSERHALB der realen Freigabezeit an ${node.name} (${label}): ` +
+          `Band [${new Date(start).toISOString()} – ${new Date(end).toISOString()}] ` +
+          `liegt in KEINEM realen Grünsegment dieses Knotens.`
+        );
+      }
+      return ok;
+    }
+
     const segments = [];
     const perStation = [];
     for (let i = 1; i < ordered.length; i++) {
@@ -219,6 +249,11 @@
         const backStart = a.s0 + tauB * 1000, backEnd = backStart + minTf * 1000;
         return { frontStart, frontEnd, backStart, backEnd };
       });
+      runs.forEach(run => {
+        assertWithinRealGreen(ordered[i - 1], run.frontStart, run.frontEnd, 'Startseite');
+        assertWithinRealGreen(ordered[i], run.backStart, run.backEnd, 'Zielseite');
+      });
+
       segments.push({ a: ordered[i - 1], b: ordered[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
 
       const entering = stages[i - 1].length, surviving = stages[i].length;
