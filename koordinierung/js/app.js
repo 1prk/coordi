@@ -12,6 +12,7 @@
     dirSelect: document.getElementById('dirSelect'),
     cyclesInput: document.getElementById('cyclesInput'),
     bandSelect: document.getElementById('bandSelect'),
+    baseStationInput: document.getElementById('baseStationInput'),
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
     hintBox: document.getElementById('hintBox'),
@@ -176,9 +177,16 @@
   // die Rück-Kette wird daher rückwärts ab der letzten Karte aufgebaut, mit
   // "Versatz Rück" (Positionsunterschied Rück-/Hin-Signalgruppe an diesem
   // Knoten) als einzigem Ankerpunkt zur Hin-Achse.
+  // Station des ersten Hin-Knotens - frei editierbar (z. B. um an eine reale
+  // Stationierung/Kilometrierung anzuschließen), statt fest bei 0 zu
+  // beginnen. Verschiebt Hin UND (über hinStationAt) Rück gemeinsam.
+  function baseStation() {
+    return Number(els.baseStationInput.value) || 0;
+  }
+
   function hinStationAt(index) {
     const nodes = state.intersections;
-    let total = 0;
+    let total = baseStation();
     for (let i = 1; i <= index; i++) total += Number(nodes[i].distanceHin) || 0;
     return total;
   }
@@ -207,7 +215,7 @@
     };
 
     if (dirKey === 'Hin') {
-      let station = 0;
+      let station = baseStation();
       for (let i = 0; i < nodes.length; i++) {
         if (i > 0) station += Number(nodes[i].distanceHin) || 0;
         pushRow(nodes[i], station);
@@ -365,7 +373,7 @@
     }).join('');
   }
 
-  [els.dirSelect, els.cyclesInput, els.bandSelect].forEach(el => el.addEventListener('change', recompute));
+  [els.dirSelect, els.cyclesInput, els.bandSelect, els.baseStationInput].forEach(el => el.addEventListener('change', recompute));
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {

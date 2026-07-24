@@ -17,7 +17,7 @@
     const sMax = Math.max(...allRows.map(r => r.station));
     const corridor = sMax - sMin;
 
-    const mL = 56, mR = 18, mT = 16, mB = 48 + Math.max(0, dirs.length - 1) * 24;
+    const mL = 56, mR = 18, mT = 16, mB = 54 + Math.max(0, dirs.length - 1) * 26;
     const wrapWidth = container.clientWidth || 800;
     const plotW = Math.max(240, wrapWidth - mL - mR - 4);
     const pxPerSec = Math.max(1.6, 150 / TU);
@@ -85,8 +85,7 @@
     });
 
     dirs.forEach((d, di) => {
-      const labelY1 = mT + plotH + 18 + di * 24;
-      const labelY2 = mT + plotH + 30 + di * 24;
+      const labelY1 = mT + plotH + 18 + di * 26;
       d.rows.forEach(r => {
         const x = X(r.station);
         svg += `<line x1="${x.toFixed(1)}" y1="${mT}" x2="${x.toFixed(1)}" y2="${mT + plotH}" stroke="var(--sig-red)" stroke-width="2.5"/>`;
@@ -104,8 +103,31 @@
         }
         svg += `<g clip-path="${clip}">${overlay}</g>`;
         svg += `<text x="${x.toFixed(1)}" y="${labelY1}" text-anchor="middle" font-size="10" font-weight="700" fill="${d.tagColor}">${d.tag} ${esc(r.name)}</text>`;
-        svg += `<text x="${x.toFixed(1)}" y="${labelY2}" text-anchor="middle" font-size="8.5" fill="var(--text-faint)">${r.station} m</text>`;
       });
+    });
+
+    // Maßketten statt absoluter Stationsangaben: je Richtung ein Pfeil pro
+    // Abschnitt (Hin -> rechts, Rück -> links, entsprechend der Fahrtrichtung),
+    // beschriftet mit dem tatsächlichen Abschnittsabstand. Der erste Hin-
+    // Knoten bleibt der einzige Bezug zu einer absoluten Station (Basis-
+    // Station im Werkzeugleisten-Feld).
+    dirs.forEach((d, di) => {
+      const y = mT + plotH + 32 + di * 26;
+      const pointRight = d.tag === 'H';
+      const ah = 4;
+      for (let i = 0; i < d.rows.length - 1; i++) {
+        const a = d.rows[i], b = d.rows[i + 1];
+        const xA = X(a.station), xB = X(b.station);
+        const dist = Math.round(b.station - a.station);
+        const xLeft = Math.min(xA, xB), xRight = Math.max(xA, xB);
+        const midX = (xLeft + xRight) / 2;
+        svg += `<line x1="${xLeft.toFixed(1)}" y1="${y}" x2="${xRight.toFixed(1)}" y2="${y}" stroke="${d.tagColor}" stroke-width="1"/>`;
+        svg += pointRight
+          ? `<polyline points="${(xRight - ah).toFixed(1)},${y - 3} ${xRight.toFixed(1)},${y} ${(xRight - ah).toFixed(1)},${y + 3}" fill="none" stroke="${d.tagColor}" stroke-width="1"/>`
+          : `<polyline points="${(xLeft + ah).toFixed(1)},${y - 3} ${xLeft.toFixed(1)},${y} ${(xLeft + ah).toFixed(1)},${y + 3}" fill="none" stroke="${d.tagColor}" stroke-width="1"/>`;
+        svg += `<rect x="${(midX - 16).toFixed(1)}" y="${(y - 7).toFixed(1)}" width="32" height="11" fill="var(--bg-panel)"/>`;
+        svg += `<text x="${midX.toFixed(1)}" y="${(y + 2).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${d.tagColor}">${dist} m</text>`;
+      }
     });
 
     svg += `<text x="${mL + plotW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Weg s [m]</text>`;
