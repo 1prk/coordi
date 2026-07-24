@@ -83,29 +83,26 @@
     els.nodeList.innerHTML = nodes.map((n, i) => {
       const label = n.knotenName || n.fileName;
       const sub = n.knotenNr ? `Nr. ${esc(n.knotenNr)}` : '';
-      // "Abstand Hin" UND "Abstand Rück" auf derselben Karte beschreiben
-      // denselben Streckenabschnitt (zur vorherigen Karte) - nur mit
-      // eigenständigen (leicht abweichenden) Werten je Richtung, z. B. bei
-      // versetzten Haltlinien. Beide Felder sind daher an der ERSTEN Karte
-      // deaktiviert (kein Vorgänger). Die LETZTE Karte hat statt "Abstand
-      // Rück" den "Versatz Rück": den Positionsunterschied zwischen Rück-
-      // und Hin-Signalgruppe an diesem Knoten. Er verankert die Rück-
-      // Stationierung auf derselben Achse wie Hin (ohne Eingabe würde der
-      // letzte, nicht separat erfasste Rück-Abschnitt einfach den
-      // Hin-Wert übernehmen).
+      // "Abstand Hin" auf Karte i = Abstand zur vorherigen Karte (deaktiviert
+      // an Karte 0, kein Vorgänger). "Abstand Rück" ist dasselbe gespiegelt:
+      // die Rückrichtung durchläuft die Liste von hinten nach vorn, ihr
+      // "vorheriger" Knoten auf Karte i ist daher Karte i+1 - deaktiviert
+      // (kein Nachfolger) an der LETZTEN Karte. Dort steht stattdessen
+      // "Versatz Rück": der Positionsunterschied zwischen Rück- und
+      // Hin-Signalgruppe an diesem Knoten, der einzige Ankerpunkt, der die
+      // eigenständige Rück-Stationierung auf dieselbe Achse wie Hin legt.
       const hinDisabled = i === 0;
-      const revDisabled = i === 0;
-      const isLast = i === nodes.length - 1 && nodes.length > 1;
+      const isLast = i === nodes.length - 1;
       const distHin = hinDisabled ? 0 : n.distanceHin;
-      const distRev = revDisabled ? 0 : n.distanceRev;
-      const revField = isLast
+      const distRev = isLast ? 0 : n.distanceRev;
+      const revOffsetField = isLast
         ? `<div class="node-field rev">
             <label>Versatz Rück [m]</label>
             <input type="number" class="node-dist-input node-rev-offset" step="1" value="${n.revOffset || 0}" title="Positionsunterschied der Rück- zur Hin-Signalgruppe an diesem (letzten) Knoten">
           </div>`
         : `<div class="node-field rev">
             <label>Abstand Rück [m]</label>
-            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}" ${revDisabled ? 'disabled' : ''}>
+            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}">
           </div>`;
       return `<div class="node-card" data-id="${n.id}">
         <div class="node-order">
@@ -129,7 +126,7 @@
             <label>Hauptsignal Rück</label>
             <select class="node-sig-select node-sig-rev">${sigOptions(n, n.mainColRev)}</select>
           </div>
-          ${revField}
+          ${revOffsetField}
         </div>
         <button type="button" class="icon-btn node-remove" title="entfernen">×</button>
       </div>`;
@@ -154,29 +151,24 @@
   }
 
   /* ---------------- Berechnung ---------------- */
-  // Hin und Rück teilen sich EINE Achse entlang des Straßenzugs - Karte i
-  // steht für denselben physischen Knoten in beiden Richtungen, nur mit
-  // eigenständigen (leicht abweichenden) Abstandswerten je Richtung. Beide
-  // Stationsketten müssen daher in derselben Reihenfolge (mit der Karten-
-  // liste) aufsteigen; ein bloßer "rückwärts gezählter" Versatz würde sonst
-  // die Rück-Richtung spiegeln statt sie der Hin-Achse zu überlagern - genau
-  // das war der vorherige Fehler (Streckenlänge verdoppelte sich).
+  // Hin: "Abstand Hin" auf Karte i = Abstand zur vorherigen Karte (i-1),
+  // deaktiviert an Karte 0 (kein Vorgänger). Station 0 an Karte 0, danach
+  // aufsteigend.
   //
-  // Hin: Station 0 an der ersten Karte, "Abstand Hin" auf Karte i = Abstand
-  // zur vorherigen Karte (deaktiviert an Karte 0).
-  //
-  // Rück: dieselbe Konvention ("Abstand Rück" auf Karte i = Abstand zur
-  // vorherigen Karte, deaktiviert an Karte 0), aber ohne eigenen Wert an der
-  // LETZTEN Karte (dort steht stattdessen "Versatz Rück"). Die Stationen
-  // werden daher rückwärts ab der letzten Karte aufgebaut: deren Position
-  // ergibt sich aus Hin-Station + Versatz, jede vorherige Karte zieht davon
-  // ihren (Rück-)Abstand zur jeweils nächsten Karte ab. Für den fehlenden
-  // letzten Abschnitt (an der letzten Karte gibt es kein "Abstand Rück"
-  // mehr) wird ersatzweise der Hin-Abstand verwendet.
-  function hinTotalLength() {
+  // Rück durchläuft dieselbe Kartenliste rückwärts (von der letzten zur
+  // ersten Karte) - ihr "vorheriger" Knoten auf Karte i ist daher Karte i+1:
+  // "Abstand Rück" auf Karte i = Abstand zur NÄCHSTEN Karte, deaktiviert an
+  // der LETZTEN Karte (kein Nachfolger). Für die kombinierte Darstellung
+  // müssen beide Stationsketten trotzdem in derselben Reihenfolge wie die
+  // Kartenliste aufsteigen (sonst lässt sich Rück nicht per Versatz auf die
+  // Hin-Achse legen, ohne den Streckenabschnitt zu verdoppeln/spiegeln) -
+  // die Rück-Kette wird daher rückwärts ab der letzten Karte aufgebaut, mit
+  // "Versatz Rück" (Positionsunterschied Rück-/Hin-Signalgruppe an diesem
+  // Knoten) als einzigem Ankerpunkt zur Hin-Achse.
+  function hinStationAt(index) {
     const nodes = state.intersections;
     let total = 0;
-    for (let i = 1; i < nodes.length; i++) total += Number(nodes[i].distanceHin) || 0;
+    for (let i = 1; i <= index; i++) total += Number(nodes[i].distanceHin) || 0;
     return total;
   }
 
@@ -211,19 +203,14 @@
       }
     } else {
       const N = nodes.length;
-      const stations = new Array(N);
       const last = N - 1;
-      stations[last] = hinTotalLength() + (Number(nodes[last]?.revOffset) || 0);
+      const local = new Array(N);
+      local[last] = 0;
       for (let i = last - 1; i >= 0; i--) {
-        // Abschnitt (i, i+1): normalerweise "Abstand Rück" von Karte i+1;
-        // für den letzten Abschnitt (i+1 === last) ersatzweise Hin-Abstand,
-        // da die letzte Karte kein eigenes "Abstand Rück" mehr hat.
-        const gap = (i + 1 === last)
-          ? Number(nodes[last].distanceHin) || 0
-          : Number(nodes[i + 1].distanceRev) || 0;
-        stations[i] = stations[i + 1] - gap;
+        local[i] = local[i + 1] - (Number(nodes[i].distanceRev) || 0);
       }
-      for (let i = 0; i < N; i++) pushRow(nodes[i], stations[i]);
+      const anchor = hinStationAt(last) + (Number(nodes[last]?.revOffset) || 0);
+      for (let i = 0; i < N; i++) pushRow(nodes[i], local[i] + anchor);
     }
     return { rows, TU: TUref, tus };
   }
