@@ -28,7 +28,12 @@
       mainColHin: defaultCol,
       mainColRev: defaultCol,
       distanceHin: 0,
-      distanceRev: 0
+      distanceRev: 0,
+      // Nur relevant, wenn dieser Knoten der letzte in der Liste ist: Versatz
+      // [m] zwischen der Rück- und der Hin-Signalgruppe an diesem Knoten
+      // (z. B. versetzte Haltlinien) - verankert die sonst eigenständige
+      // Rückrichtungs-Stationierung auf der Hinrichtungs-Achse.
+      revOffset: 0
     };
   }
 

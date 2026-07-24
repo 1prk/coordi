@@ -84,13 +84,26 @@
       const label = n.knotenName || n.fileName;
       const sub = n.knotenNr ? `Nr. ${esc(n.knotenNr)}` : '';
       // Hin zählt vorwärts ab der ersten Karte (Station 0 dort); Rück zählt
-      // rückwärts ab der letzten Karte (Station 0 dort) - "Abstand Rück" auf
-      // einer Karte ist daher der Abstand zur NÄCHSTEN Karte (Richtung Ende),
-      // nicht zur vorherigen.
+      // rückwärts ab der letzten Karte - "Abstand Rück" auf einer Karte ist
+      // daher der Abstand zur NÄCHSTEN Karte (Richtung Ende), nicht zur
+      // vorherigen. Die letzte Karte hat keinen "nächsten" Knoten mehr - dort
+      // wird stattdessen der Versatz zwischen Hin- und Rück-Signalgruppe
+      // abgefragt, der die sonst eigenständige Rück-Stationierung auf die
+      // Hin-Achse verankert (ohne Eingabe wären beide Richtungen an diesem
+      // Knoten fälschlich an derselben Stelle angenommen).
       const hinDisabled = i === 0;
-      const revDisabled = i === nodes.length - 1;
+      const isLast = i === nodes.length - 1;
       const distHin = hinDisabled ? 0 : n.distanceHin;
-      const distRev = revDisabled ? 0 : n.distanceRev;
+      const distRev = isLast ? 0 : n.distanceRev;
+      const revField = isLast
+        ? `<div class="node-field rev">
+            <label>Versatz Rück [m]</label>
+            <input type="number" class="node-dist-input node-rev-offset" step="1" value="${n.revOffset || 0}" title="Abstand der Rück- zur Hin-Signalgruppe an diesem (letzten) Knoten">
+          </div>`
+        : `<div class="node-field rev">
+            <label>Abstand Rück [m]</label>
+            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}">
+          </div>`;
       return `<div class="node-card" data-id="${n.id}">
         <div class="node-order">
           <button type="button" class="icon-btn node-up" ${i === 0 ? 'disabled' : ''} title="nach oben">▲</button>
@@ -113,10 +126,7 @@
             <label>Hauptsignal Rück</label>
             <select class="node-sig-select node-sig-rev">${sigOptions(n, n.mainColRev)}</select>
           </div>
-          <div class="node-field rev">
-            <label>Abstand Rück [m]</label>
-            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}" ${revDisabled ? 'disabled' : ''}>
-          </div>
+          ${revField}
         </div>
         <button type="button" class="icon-btn node-remove" title="entfernen">×</button>
       </div>`;
@@ -128,7 +138,10 @@
       card.querySelector('.node-sig-hin').addEventListener('change', (e) => { node.mainColHin = Number(e.target.value); recompute(); });
       card.querySelector('.node-sig-rev').addEventListener('change', (e) => { node.mainColRev = Number(e.target.value); recompute(); });
       card.querySelector('.node-dist-hin').addEventListener('change', (e) => { node.distanceHin = Number(e.target.value) || 0; recompute(); });
-      card.querySelector('.node-dist-rev').addEventListener('change', (e) => { node.distanceRev = Number(e.target.value) || 0; recompute(); });
+      const distRevInput = card.querySelector('.node-dist-rev');
+      if (distRevInput) distRevInput.addEventListener('change', (e) => { node.distanceRev = Number(e.target.value) || 0; recompute(); });
+      const revOffsetInput = card.querySelector('.node-rev-offset');
+      if (revOffsetInput) revOffsetInput.addEventListener('change', (e) => { node.revOffset = Number(e.target.value) || 0; recompute(); });
       card.querySelector('.node-remove').addEventListener('click', () => { state.removeIntersection(id); renderNodeList(); recompute(); });
       const upBtn = card.querySelector('.node-up');
       const downBtn = card.querySelector('.node-down');
@@ -148,7 +161,11 @@
   //         werden daher von hinten nach vorn durchlaufen, damit die
   //         zurückgegebenen Zeilen wie bei Hin aufsteigend nach Station
   //         sortiert sind.
-  function collectRows(dirKey) {
+  // stationShift verschiebt (nur für 'Rev' relevant) die sonst bei 0 an der
+  // letzten Karte verankerten Stationen auf die gemeinsame Hin-Achse - siehe
+  // computeDirection/recompute.
+  function collectRows(dirKey, stationShift) {
+    const shift = stationShift || 0;
     const nodes = state.intersections;
     const rows = [];
     let TUref = null;
@@ -180,16 +197,25 @@
     } else {
       for (let i = nodes.length - 1; i >= 0; i--) {
         if (i < nodes.length - 1) station += Number(nodes[i].distanceRev) || 0;
-        pushRow(nodes[i], station);
+        pushRow(nodes[i], station + shift);
       }
     }
     return { rows, TU: TUref, tus };
   }
 
+  // Summe aller "Abstand Hin"-Werte - die Position der letzten Karte auf der
+  // Hin-Achse, unabhängig davon, ob ihr Hauptsignal Hin gültig ist.
+  function hinTotalLength() {
+    const nodes = state.intersections;
+    let total = 0;
+    for (let i = 1; i < nodes.length; i++) total += Number(nodes[i].distanceHin) || 0;
+    return total;
+  }
+
   // Reine Berechnung (keine DOM-Zugriffe) für eine Richtung.
-  function computeDirection(dirKey, dirTag, vpInput, enabled) {
+  function computeDirection(dirKey, dirTag, vpInput, enabled, stationShift) {
     if (!enabled) return { ok: false };
-    const { rows, TU, tus } = collectRows(dirKey);
+    const { rows, TU, tus } = collectRows(dirKey, stationShift);
     if (!TU || rows.length < 2) return { ok: false, reason: rows.length < 2 ? 'nodes' : 'tu' };
     const sMin = rows[0].station, sMax = rows[rows.length - 1].station;
     const corridor = sMax - sMin;
@@ -216,8 +242,10 @@
     const dirMode = els.dirSelect.value;
     const hinEnabled = dirMode !== 'rev';
     const revEnabled = dirMode !== 'fwd';
-    const resHin = computeDirection('Hin', 'fwd', els.vpFwdInput, hinEnabled);
-    const resRev = computeDirection('Rev', 'rev', els.vpRevInput, revEnabled);
+    const lastNode = state.intersections[state.intersections.length - 1];
+    const revShift = hinTotalLength() + (Number(lastNode?.revOffset) || 0);
+    const resHin = computeDirection('Hin', 'fwd', els.vpFwdInput, hinEnabled, 0);
+    const resRev = computeDirection('Rev', 'rev', els.vpRevInput, revEnabled, revShift);
 
     if (!resHin.ok && !resRev.ok) {
       hidePanels();
