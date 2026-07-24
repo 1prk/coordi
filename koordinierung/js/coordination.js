@@ -102,12 +102,16 @@
 
   // Überlappung eines Intervalls mit einer Liste realer Intervalle (0..n
   // Treffer - üblicherweise 0 oder 1, da reale Grünfenster eines Knotens
-  // sich nicht überschneiden).
+  // sich nicht überschneiden). "e >= s" (nicht "e > s"): ein Startzeitfenster
+  // kann auf EINEN einzigen Zeitpunkt zusammenfallen (Breite 0), nämlich
+  // genau dann, wenn ein Knoten exakt so breit ist wie der Engpass minTf -
+  // das ist der Normalfall für den Engpass-Knoten selbst und muss als
+  // gültiger Treffer zählen, nicht verworfen werden.
   function intersectIntervalWithList(iv, list) {
     const out = [];
     for (const L of list) {
       const s = Math.max(iv.start, L.start), e = Math.min(iv.end, L.end);
-      if (e > s) out.push({ start: s, end: e });
+      if (e >= s) out.push({ start: s, end: e });
     }
     return out;
   }
@@ -174,14 +178,32 @@
       stage = next;
     }
 
-    // Je Abschnitt EIN minTf-breites Fenster pro noch gültigem Startfenster
-    // (verankert am frühestmöglichen Startzeitpunkt darin) - überall
-    // dieselbe (konstante) Breite minTf, kein Tapern/Verengen.
+    const finalStage = stages[stages.length - 1];
+    const overall = {
+      totalCycles: stages[0].length,
+      successCount: finalStage.length,
+      failCount: stages[0].length - finalStage.length,
+      rate: stages[0].length ? finalStage.length / stages[0].length : 0,
+      bandwidth: minTf
+    };
+
+    // Nur Zyklen zeichnen, die den GESAMTEN Streckenzug bis zum letzten
+    // Knoten überstehen (nicht jeden Zwischenstand je Abschnitt) - EIN
+    // durchgehendes, konstant minTf breites Band pro erfolgreichem Zyklus
+    // über ALLE Abschnitte hinweg, verankert am frühestmöglichen
+    // Startzeitpunkt am ERSTEN Knoten (s0) und nur um die kumulierte
+    // Reisezeit je Knoten verschoben - dieselbe Form an jedem Abschnitt,
+    // kein Sprung/Tapern zwischen den Knoten, weil es exakt dasselbe Fenster
+    // ist. Reicht damit vom frühestmöglichen bis zum spätestmöglichen
+    // (jeweils real erreichbaren) Grünzeitpunkt im Streckenzug.
+    const survivingOrigins = new Set(finalStage.map(iv => iv.origin));
+    const survivorStarts = stages[0].filter(iv => survivingOrigins.has(iv.origin));
+
     const segments = [];
     const perStation = [];
     for (let i = 1; i < ordered.length; i++) {
       const tauA = tau[i - 1], tauB = tau[i];
-      const runs = stages[i - 1].map(iv => {
+      const runs = survivorStarts.map(iv => {
         const frontStart = iv.start + tauA * 1000, frontEnd = frontStart + minTf * 1000;
         const backStart = iv.start + tauB * 1000, backEnd = backStart + minTf * 1000;
         return { frontStart, frontEnd, backStart, backEnd };
@@ -195,15 +217,6 @@
         rate: entering ? surviving / entering : 0
       });
     }
-
-    const finalStage = stages[stages.length - 1];
-    const overall = {
-      totalCycles: stages[0].length,
-      successCount: finalStage.length,
-      failCount: stages[0].length - finalStage.length,
-      rate: stages[0].length ? finalStage.length / stages[0].length : 0,
-      bandwidth: minTf
-    };
 
     // Je Ursprungs-Umlauf (reales Grünfenster am ersten Knoten) der
     // Ausgang über den ganzen Streckenzug - Basis für die "Sprung"-Tabelle:
