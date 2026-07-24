@@ -196,16 +196,27 @@
     // kein Sprung/Tapern zwischen den Knoten, weil es exakt dasselbe Fenster
     // ist. Reicht damit vom frühestmöglichen bis zum spätestmöglichen
     // (jeweils real erreichbaren) Grünzeitpunkt im Streckenzug.
-    const survivingOrigins = new Set(finalStage.map(iv => iv.origin));
-    const survivorStarts = stages[0].filter(iv => survivingOrigins.has(iv.origin));
+    //
+    // WICHTIG: als Anker dient NICHT der rohe (ungeklammerte) Startwert aus
+    // stages[0], sondern der tatsächlich überlebende Wert aus der LETZTEN
+    // Stufe, zurückgerechnet auf den Nullpunkt (abzüglich der gesamten
+    // Reisezeit). Eine Zwischenstation kann das gültige Startfenster enger
+    // klammern (nicht nur der Engpass-Knoten selbst) - wird dort weiterhin
+    // der rohe Ursprungswert verwendet, kann das gezeichnete Fenster an
+    // genau dieser Zwischenstation außerhalb des tatsächlich geprüften
+    // (validen) Bereichs liegen. Der zurückgerechnete Endwert ist dagegen
+    // per Konstruktion (Schnittmengen können nur enger werden) an JEDER
+    // Station gültig.
+    const tauLastMs = tau[tau.length - 1] * 1000;
+    const survivorAnchors = finalStage.map(iv => ({ origin: iv.origin, s0: iv.start - tauLastMs }));
 
     const segments = [];
     const perStation = [];
     for (let i = 1; i < ordered.length; i++) {
       const tauA = tau[i - 1], tauB = tau[i];
-      const runs = survivorStarts.map(iv => {
-        const frontStart = iv.start + tauA * 1000, frontEnd = frontStart + minTf * 1000;
-        const backStart = iv.start + tauB * 1000, backEnd = backStart + minTf * 1000;
+      const runs = survivorAnchors.map(a => {
+        const frontStart = a.s0 + tauA * 1000, frontEnd = frontStart + minTf * 1000;
+        const backStart = a.s0 + tauB * 1000, backEnd = backStart + minTf * 1000;
         return { frontStart, frontEnd, backStart, backEnd };
       });
       segments.push({ a: ordered[i - 1], b: ordered[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
