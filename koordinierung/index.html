@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Koordinierung</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <div class="titlebar">
+    <div class="brand">
+      <div class="brand-badge"><span class="b1"></span><span class="b2"></span><span class="b3"></span><span class="b4"></span></div>
+      <div class="brand-title">Koordinierung</div>
+    </div>
+    <div class="toolbar">
+      <button class="add-btn" id="btnAddFile" title="Knoten (CSV) hinzufügen">+</button>
+      <input type="file" id="fileInput" accept=".csv,.txt,.tsv" multiple>
+      <span class="tb-field">Richtung
+        <select id="dirSelect">
+          <option value="both">Beide</option>
+          <option value="fwd">Hinrichtung</option>
+          <option value="rev">Gegenrichtung</option>
+        </select>
+      </span>
+      <span class="tb-field">Umläufe
+        <input type="number" id="cyclesInput" min="1" max="16" step="1" value="6">
+      </span>
+      <span class="tb-field">Grünband
+        <select id="bandSelect">
+          <option value="measured">An</option>
+          <option value="off">Aus</option>
+        </select>
+      </span>
+    </div>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+
+  <div class="panel">
+    <div class="panel-head">Knoten</div>
+    <div class="node-list" id="nodeList"></div>
+  </div>
+
+  <div class="hint-box" id="hintBox" style="display:none;"></div>
+
+  <div class="panel" id="kpiPanel" style="display:none;">
+    <div class="panel-head">Kenngrößen</div>
+    <div class="kpi-grid" id="kpiGrid"></div>
+  </div>
+
+  <div class="panel" id="diagramPanel" style="display:none;">
+    <div class="panel-head">
+      <span>Zeit-Weg-Diagramm</span>
+      <span id="diagramInfo" style="font-family:var(--mono); font-size:10.5px; font-weight:400; text-transform:none; letter-spacing:normal;"></span>
+    </div>
+    <div class="legend">
+      <span class="item"><span class="swatch" style="background:var(--sig-green)"></span>Grünlage je Knoten</span>
+      <span class="item"><span class="swatch" style="background:rgba(46,125,70,.22);border:1px solid var(--sig-green)"></span>Grünband je Abschnitt</span>
+      <span class="item"><span class="swatch" style="background:var(--sig-red);height:3px;align-self:center;"></span>Sperrzeit</span>
+      <span class="item"><span class="swatch" style="background:var(--accent)"></span>Progressionslinie</span>
+      <span class="item"><span class="swatch" style="background:repeating-linear-gradient(90deg,var(--text-faint) 0 3px,transparent 3px 6px);height:2px;align-self:center;"></span>Teilpunkt-Raster</span>
+    </div>
+    <div class="diagram-wrap" id="diagram"></div>
+  </div>
+
+  <div class="panel" id="tablePanel" style="display:none;">
+    <div class="panel-head">Knoten im Straßenzug</div>
+    <table>
+      <thead><tr>
+        <th>Knoten</th><th>Station</th><th>Abstand</th><th>An</th><th>Ab</th>
+        <th>TF</th><th>Versatz</th><th>E</th><th>Lage</th>
+      </tr></thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <footer>Client-seitige Auswertung — keine Daten verlassen den Browser.</footer>
+</div>
+
+<script src="js/utils.js"></script>
+<script src="js/parser.js"></script>
+<script src="js/coordination.js"></script>
+<script src="js/diagram.js"></script>
+<script src="js/state.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
