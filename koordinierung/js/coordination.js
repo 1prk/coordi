@@ -76,11 +76,28 @@
     return tau;
   }
 
+  // An/Ab EINES realen Grünsegments, relativ zum eigenen (nächstgelegenen)
+  // Umlaufbeginn des Knotens - im Gegensatz zum Medianwert im Signalplan
+  // (planByCol) gibt das die TATSÄCHLICHE Lage genau dieses Vorkommens
+  // wieder (inkl. etwaiger Schwankung/Planwechsel über den Tag).
+  function realAnAb(cycleStarts, TU, g) {
+    const cs = App.parser.findEnclosingCycleStart(g.start, cycleStarts);
+    if (cs == null) return null;
+    const an = ((Math.round((g.start - cs) / 1000) % TU) + TU) % TU;
+    const tf = Math.round((g.end - g.start) / 1000);
+    return { an, ab: an + tf, tf };
+  }
+
   // "Querschnitts"-Band (qualitativ): je Abschnitt einfach die Grünzeit des
   // ABFAHRENDEN Knotens, unabhängig von den übrigen Knoten - keine
-  // Verengung, keine Kumulierung. Zeigt auf einen Blick, ob das Band jede
-  // einzelne Grünzeit im Streckenzug überhaupt berührt/schneidet, ohne eine
-  // Aussage über die tatsächlich durchgehend nutzbare Bandbreite zu treffen.
+  // Verengung, keine Kumulierung. Gezeichnet wird direkt aus den REALEN
+  // Grünsegmenten des abfahrenden Knotens (nicht aus einem periodisch
+  // wiederholten Medianwert) - jedes tatsächliche Vorkommen bekommt sein
+  // eigenes Parallelogramm, verschoben um die Reisezeit dieses Abschnitts.
+  // Das zeigt auf einen Blick, ob das Band jede einzelne (reale) Grünzeit im
+  // Streckenzug überhaupt berührt/schneidet, inklusive etwaiger realer
+  // Schwankungen zwischen den Knoten, statt eine idealisierte Periodizität
+  // vorauszusetzen.
   function computeQualitativeBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
@@ -91,10 +108,17 @@
     const segments = [];
     for (let i = 1; i < ordered.length; i++) {
       const a = ordered[i - 1];
-      segments.push({
-        a, b: ordered[i], anA: a.an, tf: a.tf, dtSeg: tau[i] - tau[i - 1],
-        vp_kmh: Number(vpKmhArray[i - 1])
+      const dtSeg = tau[i] - tau[i - 1];
+      const dtSegMs = dtSeg * 1000;
+      const occurrences = (a.greenSegs || []).map(g => {
+        const meta = realAnAb(a.cycleStarts, TU, g) || { an: a.an, ab: a.an + a.tf, tf: a.tf };
+        return {
+          frontStart: g.start, frontEnd: g.end,
+          backStart: g.start + dtSegMs, backEnd: g.end + dtSegMs,
+          an: meta.an, ab: meta.ab
+        };
       });
+      segments.push({ a, b: ordered[i], dtSeg, occurrences, vp_kmh: Number(vpKmhArray[i - 1]) });
     }
     return { ordered, segments };
   }
@@ -102,14 +126,26 @@
   // "Optimum"-Band: das Band, das JEDE Grünzeit im Streckenzug durchgehend
   // durchläuft - für eine je Abschnitt eigene (feste) Progressionsgeschwin-
   // digkeit, an welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an
-  // JEDEM nachfolgenden Knoten noch auf Grün trifft. Der gültige Zeitbereich
-  // kann sich von Knoten zu Knoten nur verengen (nie vergrößern). Jeder
-  // Abschnitt ist ein ECHTES Parallelogramm - konstante Breite über den
-  // gesamten Abschnitt, kein Tapern innerhalb eines Abschnitts. Die Breite
-  // eines Abschnitts ist die bis einschließlich des ANKOMMENDEN Knotens
-  // gültige (kumulierte) Breite; ein Knoten mit engerer Grünzeit verengt das
-  // Band daher sichtbar als Stufe an seiner eigenen Position, nicht als
-  // Taper im Abschnitt davor oder danach.
+  // JEDEM vorherigen Knoten noch auf Grün getroffen hat. Der gültige
+  // Zeitbereich kann sich von Knoten zu Knoten nur verengen (nie
+  // vergrößern). Jeder Abschnitt ist ein ECHTES Parallelogramm - konstante
+  // Breite über den gesamten Abschnitt, kein Tapern innerhalb eines
+  // Abschnitts. Die Breite eines Abschnitts ist die bis einschließlich des
+  // ABFAHRENDEN Knotens gültige (kumulierte) Breite; ein Knoten mit
+  // engerer Grünzeit verengt das Band daher sichtbar als Stufe an seiner
+  // eigenen Position, nicht rückwirkend im Abschnitt davor.
+  //
+  // Die zugrunde liegende Verengungs-Maske ist ein periodisches (mod TU)
+  // Modell relativ zur Uhr des Bezugsknotens (ordered[0]) - für die
+  // Positionierung in absoluter Zeit wird sie aber NICHT einfach an den
+  // realen Umlaufgrenzen des Bezugsknotens wiederholt (das koppelt jeden
+  // Abschnitt fälschlich an die Uhr eines ANDEREN, ggf. leicht
+  // asynchronen Knotens und lässt den Versatz über viele Umläufe sichtbar
+  // "auseinanderlaufen"). Stattdessen wird je Abschnitt die Phase relativ
+  // zum eigenen Umlauf des ABFAHRENDEN Knotens berechnet (localA0, mod TU)
+  // und an dessen EIGENEN realen Umlaufgrenzen (a.cycleStarts) wiederholt -
+  // nur die Reisezeit DIESES Abschnitts (dtSeg) wird für die Gegenseite
+  // hinzuaddiert, nicht die kumulierte Reisezeit über den ganzen Streckenzug.
   function computeProposedBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
@@ -133,22 +169,16 @@
       stageMasks.push(next);
     }
 
-    // Je Abschnitt zeigt das Parallelogramm den kumulierten Zustand BIS
-    // EINSCHLIESSLICH des ABFAHRENDEN Knotens (stageMasks[i-1]) - NICHT
-    // zusätzlich durch den ankommenden Knoten verengt. So bleibt die Breite
-    // eines Abschnitts an der Position des abfahrenden Knotens verankert
-    // (Stufe an dessen eigener Grünzeit) und das Parallelogramm kann die
-    // tatsächliche Grünzeit des nächsten Knotens sichtbar über- oder
-    // unterschreiten - genau das macht mangelnde Koordination sichtbar,
-    // statt sie durch Vor-Verengung zu verstecken.
     const segments = [];
     for (let i = 1; i < ordered.length; i++) {
-      const runs = circularRuns(stageMasks[i - 1]).map(run => ({
-        t0a: run.start * step,
-        t0b: (run.start + run.len) * step,
-        width: run.len * step
-      }));
-      segments.push({ a: ordered[i - 1], b: ordered[i], tauA: tau[i - 1], tauB: tau[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
+      const a = ordered[i - 1];
+      const tauA = tau[i - 1], dtSeg = tau[i] - tau[i - 1];
+      const runs = circularRuns(stageMasks[i - 1]).map(run => {
+        const t0 = run.start * step;
+        const localA0 = (((t0 + tauA) % TU) + TU) % TU;
+        return { localA0, width: run.len * step };
+      });
+      segments.push({ a, b: ordered[i], dtSeg, runs, vp_kmh: Number(vpKmhArray[i - 1]) });
     }
 
     const finalRuns = circularRuns(stageMasks[stageMasks.length - 1]);

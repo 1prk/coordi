@@ -47,8 +47,19 @@
     const clipId = 'coordClip' + Math.random().toString(36).slice(2, 8);
     const clip = `url(#${clipId})`;
 
+    // Grünband-Füllung: grüne Schraffur statt Volltonfarbe - deutlich von der
+    // massiven Grünphasen-Markierung (var(--sig-green)) unterscheidbar,
+    // während die Bandrichtung (H/R) weiterhin über die Randfarbe erkennbar
+    // bleibt (siehe bandStroke je Richtung).
+    const hatchId = 'bandHatch' + Math.random().toString(36).slice(2, 8);
+    const hatchFillUrl = `url(#${hatchId})`;
+
     let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, ui-monospace, monospace">`;
-    svg += `<defs><clipPath id="${clipId}"><rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}"/></clipPath></defs>`;
+    svg += `<defs><clipPath id="${clipId}"><rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}"/></clipPath>`;
+    svg += `<pattern id="${hatchId}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`
+      + `<rect width="6" height="6" fill="rgba(120,190,110,0.22)"/>`
+      + `<line x1="0" y1="0" x2="0" y2="6" stroke="#3f8a4c" stroke-width="2"/>`
+      + `</pattern></defs>`;
     svg += `<rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}" fill="#fff" stroke="var(--border-strong)"/>`;
 
     // Gitterlinien mit verstrichener Zeit ab 00:00:00 (Nullpunkt am unteren
@@ -77,46 +88,56 @@
 
     // "Querschnitts"-Band (qualitativ): je Abschnitt einfach die Grünzeit des
     // abfahrenden Knotens, ohne Verengung - zeigt auf einen Blick, ob das
-    // Band jede einzelne Grünzeit im Streckenzug überhaupt berührt.
-    // Ungefüllt/gestrichelt, um es vom Optimum-Band zu unterscheiden.
+    // Band jede einzelne (reale) Grünzeit im Streckenzug überhaupt berührt.
+    // Gezeichnet direkt aus den realen Vorkommen (occurrences) des
+    // abfahrenden Knotens - kein periodisch wiederholter Medianwert, daher
+    // keine künstliche Drift gegenüber der Realität. Grün schraffiert,
+    // gestrichelter Rand, um es von der massiven Grünphase UND vom
+    // Optimum-Band zu unterscheiden.
     dirs.forEach(d => {
-      if (!showQualitative || !d.qualitativeBand || !d.refCycleStarts || !d.refCycleStarts.length) return;
+      if (!showQualitative || !d.qualitativeBand) return;
       let qSvg = '';
-      d.refCycleStarts.forEach(cs => {
-        d.qualitativeBand.segments.forEach(seg => {
-          const xA = X(seg.a.station), xB = X(seg.b.station);
-          const yFrontA = Y(cs + seg.anA * 1000), yFrontB = Y(cs + (seg.anA + seg.dtSeg) * 1000);
-          const yBackA = Y(cs + (seg.anA + seg.tf) * 1000), yBackB = Y(cs + (seg.anA + seg.dtSeg + seg.tf) * 1000);
+      d.qualitativeBand.segments.forEach(seg => {
+        const xA = X(seg.a.station), xB = X(seg.b.station);
+        seg.occurrences.forEach(occ => {
+          const yFrontA = Y(occ.frontStart), yFrontB = Y(occ.backStart);
+          const yBackA = Y(occ.frontEnd), yBackB = Y(occ.backEnd);
           if (Math.max(yFrontA, yFrontB, yBackA, yBackB) < mT || Math.min(yFrontA, yFrontB, yBackA, yBackB) > mT + plotH) return;
           const pts = [[xA, yFrontA], [xB, yFrontB], [xB, yBackB], [xA, yBackA]]
             .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-          qSvg += `<polygon points="${pts}" fill="none" stroke="${d.bandStroke}" stroke-width="1.2" stroke-dasharray="3 2"><title>${esc(seg.a.name)}: Grünzeit ${seg.tf}s bei ${seg.vp_kmh.toFixed(0)} km/h (Querschnitt, ohne Verengung)</title></polygon>`;
+          qSvg += `<polygon points="${pts}" fill="${hatchFillUrl}" stroke="${d.bandStroke}" stroke-width="1.2" stroke-dasharray="3 2"><title>${esc(seg.a.name)}: An ${occ.an}-Ab ${occ.ab} bei ${seg.vp_kmh.toFixed(0)} km/h (Querschnitt, ohne Verengung)</title></polygon>`;
         });
       });
       svg += `<g clip-path="${clip}">${qSvg}</g>`;
     });
 
     // Optimum-Band: dieselbe (umlaufperiodische) Verengungs-Maske wie zuvor,
-    // wiederholt an den ECHTEN Umlaufgrenzen des Bezugsknotens über die
-    // gesamte Aufzeichnung. Jeder Abschnitt ist ein echtes Parallelogramm
-    // (konstante Breite, kein Tapern) - die bis einschließlich des
-    // ABFAHRENDEN Knotens gültige (kumulierte) Breite; ein nachfolgender
-    // Knoten mit engerer Grünzeit verengt das Band daher erst AB seiner
-    // eigenen Position als sichtbare Stufe - der Abschnitt davor kann seine
-    // tatsächliche Grünzeit sichtbar über- oder unterschreiten.
+    // aber je Abschnitt an den ECHTEN Umlaufgrenzen des ABFAHRENDEN Knotens
+    // (seg.a.cycleStarts) wiederholt - nicht an denen eines fernen
+    // Bezugsknotens, dessen Uhr real leicht anders läuft und über viele
+    // Umläufe sichtbar "auseinanderdriften" würde. Jeder Abschnitt ist ein
+    // echtes Parallelogramm (konstante Breite, kein Tapern) - die bis
+    // einschließlich des ABFAHRENDEN Knotens gültige (kumulierte) Breite;
+    // ein nachfolgender Knoten mit engerer Grünzeit verengt das Band daher
+    // erst AB seiner eigenen Position als sichtbare Stufe - der Abschnitt
+    // davor kann seine tatsächliche Grünzeit sichtbar über- oder
+    // unterschreiten.
     dirs.forEach(d => {
-      if (!showOptimum || !d.proposedBand || !d.refCycleStarts || !d.refCycleStarts.length) return;
+      if (!showOptimum || !d.proposedBand) return;
       let propSvg = '';
-      d.refCycleStarts.forEach(cs => {
-        d.proposedBand.segments.forEach(seg => {
-          const xA = X(seg.a.station), xB = X(seg.b.station);
+      d.proposedBand.segments.forEach(seg => {
+        const xA = X(seg.a.station), xB = X(seg.b.station);
+        const cycleStarts = seg.a.cycleStarts || [];
+        cycleStarts.forEach(ck => {
           seg.runs.forEach(run => {
-            const yA0 = Y(cs + (run.t0a + seg.tauA) * 1000), yA1 = Y(cs + (run.t0b + seg.tauA) * 1000);
-            const yB0 = Y(cs + (run.t0a + seg.tauB) * 1000), yB1 = Y(cs + (run.t0b + seg.tauB) * 1000);
+            const frontStart = ck + run.localA0 * 1000, frontEnd = ck + (run.localA0 + run.width) * 1000;
+            const backStart = frontStart + seg.dtSeg * 1000, backEnd = frontEnd + seg.dtSeg * 1000;
+            const yA0 = Y(frontStart), yA1 = Y(frontEnd);
+            const yB0 = Y(backStart), yB1 = Y(backEnd);
             if (Math.max(yA0, yA1, yB0, yB1) < mT || Math.min(yA0, yA1, yB0, yB1) > mT + plotH) return;
             const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
               .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-            propSvg += `<polygon points="${pts}" fill="${d.bandFill}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
+            propSvg += `<polygon points="${pts}" fill="${hatchFillUrl}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
           });
         });
       });
@@ -135,7 +156,17 @@
         (r.greenSegs || []).forEach(seg => {
           const ys = Y(seg.end), ye = Y(seg.start);
           if (ye < mT || ys > mT + plotH) return;
-          overlay += `<rect x="${(x - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${Math.max(1, ye - ys).toFixed(1)}" fill="var(--sig-green)"><title>${esc(r.name)} (${d.tag}): ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
+          const h = Math.max(1, ye - ys);
+          overlay += `<rect x="${(x - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${h.toFixed(1)}" fill="var(--sig-green)"><title>${esc(r.name)} (${d.tag}): ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
+          // An-/Abwurfzeitpunkt (Sekunde im Umlauf) je realem Grünsegment -
+          // relativ zum nächstgelegenen eigenen Umlaufbeginn dieses Knotens.
+          const cs = App.parser.findEnclosingCycleStart(seg.start, r.cycleStarts);
+          if (cs != null && TU) {
+            const an = ((Math.round((seg.start - cs) / 1000) % TU) + TU) % TU;
+            const tf = Math.round((seg.end - seg.start) / 1000);
+            const labelY = (ys + ye) / 2;
+            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(labelY + 2.5).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${an}–${an + tf}</text>`;
+          }
         });
         svg += `<g clip-path="${clip}">${overlay}</g>`;
       });
