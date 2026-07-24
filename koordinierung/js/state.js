@@ -16,7 +16,7 @@
       const plan = TU ? computeSignalplanRow(segs, parsed.cycleStarts, TU) : null;
       planByCol.set(col.index, plan);
     });
-    const mainCol = parsed.columns.find(c => planByCol.get(c.index))?.index ?? null;
+    const defaultCol = parsed.columns.find(c => planByCol.get(c.index))?.index ?? null;
     return {
       id: uid(),
       fileName,
@@ -25,8 +25,10 @@
       columns: parsed.columns,
       planByCol,
       TU,
-      mainCol,
-      distance: 0
+      mainColHin: defaultCol,
+      mainColRev: defaultCol,
+      distanceHin: 0,
+      distanceRev: 0
     };
   }
 
