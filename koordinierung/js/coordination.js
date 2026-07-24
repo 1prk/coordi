@@ -141,14 +141,19 @@
     const tau = computeTau(ordered, vpKmhArray);
     if (!tau) return null;
 
-    let stage = intervalsFromSegs(ordered[0].greenSegs);
+    // Jedes Intervall trägt seinen "origin" (Index des ursprünglichen realen
+    // Grünfensters am ersten Knoten) über alle Stufen mit - so lässt sich
+    // hinterher je Ursprungs-Umlauf zurückverfolgen, ob (und ggf. an
+    // welcher Station) er ausgeschieden ist (siehe "cycles" unten, Basis
+    // für die Sprung-Tabelle in der UI).
+    let stage = intervalsFromSegs(ordered[0].greenSegs).map((iv, idx) => ({ ...iv, origin: idx }));
     const stages = [stage];
     for (let i = 1; i < ordered.length; i++) {
       const dtMs = (tau[i] - tau[i - 1]) * 1000;
-      const shifted = stage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs }));
+      const shifted = stage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs, origin: iv.origin }));
       const realList = intervalsFromSegs(ordered[i].greenSegs);
       const next = [];
-      shifted.forEach(iv => { intersectIntervalWithList(iv, realList).forEach(r => next.push(r)); });
+      shifted.forEach(iv => { intersectIntervalWithList(iv, realList).forEach(r => next.push({ ...r, origin: iv.origin })); });
       stages.push(next);
       stage = next;
     }
@@ -188,7 +193,27 @@
       width: widthStats(finalStage)
     };
 
-    return { ordered, tau, segments, perStation, overall };
+    // Je Ursprungs-Umlauf (reales Grünfenster am ersten Knoten) der
+    // Ausgang über den ganzen Streckenzug - Basis für die "Sprung"-Tabelle:
+    // erfolgreich (durchgehend bis zum letzten Knoten) oder gescheitert
+    // (mit Angabe, an welchem Knoten es zuerst nicht mehr passte).
+    const cycles = stages[0].map(start0 => {
+      let lastIv = start0, survivedIdx = 0;
+      for (let s = 1; s < stages.length; s++) {
+        const found = stages[s].find(iv => iv.origin === start0.origin);
+        if (!found) break;
+        lastIv = found; survivedIdx = s;
+      }
+      const success = survivedIdx === stages.length - 1;
+      return {
+        start: start0.start, end: start0.end,
+        success,
+        failedAt: success ? null : ordered[survivedIdx + 1],
+        finalWidth: success ? (lastIv.end - lastIv.start) / 1000 : null
+      };
+    });
+
+    return { ordered, tau, segments, perStation, overall, cycles };
   }
 
   App.coordination = {

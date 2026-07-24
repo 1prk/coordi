@@ -85,6 +85,22 @@
     <div class="hint-box" style="margin:0 12px 12px;">Erfolgreiche Koordination = das Optimum-Grünband durchläuft den Umlauf durchgehend bis zum jeweiligen Knoten, ohne an einer Station auf Rot zu treffen. „Eintretend" je Übergang ist die Anzahl der Umläufe, die den vorherigen Knoten noch durchgehend Grün erreicht haben.</div>
   </div>
 
+  <div class="panel" id="cycleJumpPanel" style="display:none;">
+    <div class="panel-head">Umlauf-Liste</div>
+    <div class="table-scroll cycle-jump-scroll">
+    <table class="stats-table">
+      <thead><tr>
+        <th>Verstrichen</th>
+        <th>Zeitpunkt</th>
+        <th>Status</th>
+        <th>Detail</th>
+      </tr></thead>
+      <tbody id="cycleJumpBody"></tbody>
+    </table>
+    </div>
+    <div class="hint-box" style="margin:0 12px 12px;">Zeile anklicken springt im Zeit-Weg-Diagramm oben zu diesem Umlauf.</div>
+  </div>
+
   <div class="panel" id="tablePanel" style="display:none;">
     <div class="panel-head">Knoten im Straßenzug</div>
     <div class="table-scroll">

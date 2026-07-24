@@ -6,7 +6,14 @@
    später. Hin- und Gegenrichtung kombiniert auf gemeinsamer Zeit-/Weg-Achse. */
 (function (App) {
   'use strict';
-  const { esc, fmtTimeShort, fmtDateTimeShort, fmtElapsed } = App.utils;
+  const { esc, fmtTimeShort, fmtDateTimeShort, fmtElapsed, clamp } = App.utils;
+
+  // Rein visueller Randabstand am Anfang/Ende der Weg-Achse (in Metern) -
+  // rückt die äußersten Knoten von den Diagrammrändern ab. Fließt NICHT in
+  // Streckenlänge/Teilpunktabstand/Bandberechnung ein (die nutzen weiterhin
+  // die echten Stationswerte aus coordination.js/app.js), nur in die
+  // Pixel-Abbildung hier.
+  const STATION_VISUAL_BUFFER_M = 10;
 
   // Rasterschritt als (nette) Bruchteil der Umlaufzeit TU - so landen die
   // Gitterlinien exakt auf TX-Werten (Sekunde im Umlauf) statt auf
@@ -25,12 +32,16 @@
   function renderDiagram(container, o) {
     const { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin, rev } = o;
     const dirs = [hin, rev].filter(Boolean);
-    if (dirs.length === 0 || !(globalTMax > globalTMin)) { container.innerHTML = ''; return; }
+    if (dirs.length === 0 || !(globalTMax > globalTMin)) { container.innerHTML = ''; return null; }
 
     const allRows = dirs.flatMap(d => d.rows);
     const sMin = Math.min(...allRows.map(r => r.station));
     const sMax = Math.max(...allRows.map(r => r.station));
     const corridor = sMax - sMin;
+    // Nur für die Pixel-Abbildung (X/sx/Tooltip) gepuffert - Streckenlänge
+    // etc. bleiben unverändert die echten Werte.
+    const sMinPlot = sMin - STATION_VISUAL_BUFFER_M, sMaxPlot = sMax + STATION_VISUAL_BUFFER_M;
+    const corridorPlot = sMaxPlot - sMinPlot;
 
     // mR großzügig bemessen (nicht nur ein schmaler Rand): die letzte
     // Stationsbeschriftung (Kopf-/Fußzeile, mittig über der Station
@@ -50,8 +61,8 @@
     const totalSec = (globalTMax - globalTMin) / 1000;
     const plotH = totalSec * pxPerSec;
     const W = mL + plotW + mR, H = mT + plotH;
-    const sx = corridor > 0 ? plotW / corridor : 0;
-    const X = s => mL + (s - sMin) * sx;
+    const sx = corridorPlot > 0 ? plotW / corridorPlot : 0;
+    const X = s => mL + (s - sMinPlot) * sx;
     // Nullpunkt unten (globalTMin), Zeit läuft nach oben.
     const Y = tMs => mT + plotH - (tMs - globalTMin) / 1000 * pxPerSec;
     const clipId = 'coordClip' + Math.random().toString(36).slice(2, 8);
@@ -284,9 +295,19 @@
       + `<div class="diagram-sticky-footer" style="width:${W}px;">${footer}</div>`
       + `<div class="diagram-tooltip"></div>`;
 
-    // Startansicht: Nullpunkt (00:00:00, unterer Rand) sichtbar - ganz nach
-    // unten gescrollt, da die Zeit hier nach oben läuft.
-    container.scrollTop = container.scrollHeight;
+    // Bildlaufposition über ein Neu-Rendern hinweg beibehalten (z. B. beim
+    // Umschalten der Grünband-Checkboxen) - nur beim ALLERERSTEN Rendern
+    // dieses Containers (kein vorheriger Zustand vorhanden) wird an den
+    // Nullpunkt (00:00:00, unterer Rand) gescrollt, da die Zeit hier nach
+    // oben läuft.
+    const prevState = container._diagramScrollState;
+    if (prevState) {
+      const tAtPrevTop = prevState.globalTMin + (prevState.mT + prevState.plotH - prevState.scrollTop) / prevState.pxPerSec * 1000;
+      const newScrollTop = mT + plotH - (tAtPrevTop - globalTMin) / 1000 * pxPerSec;
+      container.scrollTop = clamp(newScrollTop, 0, container.scrollHeight);
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
 
     // Aktuellen Signalzeitenplan je Knoten anzeigen - bezogen auf die Zeit
     // am oberen Rand des sichtbaren Ausschnitts, aktualisiert beim Scrollen.
@@ -304,13 +325,24 @@
       });
       splLiveEl.textContent = `${fmtElapsed(tAtViewTop - globalTMin)}` + (parts.length ? ` · ${parts.join(' · ')}` : '');
     }
+    container._diagramScrollState = { globalTMin, mT, plotH, pxPerSec, scrollTop: container.scrollTop };
     let scrollScheduled = false;
     container.addEventListener('scroll', () => {
+      container._diagramScrollState.scrollTop = container.scrollTop;
       if (scrollScheduled) return;
       scrollScheduled = true;
       requestAnimationFrame(() => { updateSplLive(); scrollScheduled = false; });
     });
     updateSplLive();
+
+    // Zu einem bestimmten Zeitpunkt springen (z. B. aus der
+    // Koordinationsstatistik heraus) - zentriert den Zeitpunkt im
+    // sichtbaren Ausschnitt.
+    function scrollToTime(tMs) {
+      const viewportH = container.clientHeight || plotH;
+      const target = mT + plotH - (tMs - globalTMin) / 1000 * pxPerSec - viewportH / 2;
+      container.scrollTop = clamp(target, 0, container.scrollHeight);
+    }
 
     // Snappy Tooltip: zeigt beim Bewegen der Maus die verstrichene Zeit und
     // den vollen Meter an der Cursorposition an.
@@ -327,7 +359,7 @@
           return;
         }
         const tMs = globalTMin + (mT + plotH - localY) / pxPerSec * 1000;
-        const sVal = Math.round(sMin + (localX - mL) / (sx || 1e-6));
+        const sVal = Math.round(sMinPlot + (localX - mL) / (sx || 1e-6));
         tooltipEl.textContent = `t = ${fmtElapsed(tMs - globalTMin)} · s = ${sVal} m`;
         const hostRect = container.getBoundingClientRect();
         tooltipEl.style.left = (e.clientX - hostRect.left + container.scrollLeft + 14) + 'px';
@@ -336,6 +368,8 @@
       });
       svgEl.addEventListener('mouseleave', () => { tooltipEl.style.display = 'none'; });
     }
+
+    return { scrollToTime };
   }
 
   App.diagram = { renderDiagram };

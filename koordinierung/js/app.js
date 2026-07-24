@@ -1,10 +1,16 @@
 /* Koordinierung – UI-Verdrahtung */
 (function (App) {
   'use strict';
-  const { esc } = App.utils;
+  const { esc, fmtElapsed, fmtDateTimeShort } = App.utils;
   const { deriveVp, teilpunktabstand, lageLabel, computeQualitativeBand, computeOptimumBand } = App.coordination;
   const { renderDiagram } = App.diagram;
   const state = App.state;
+
+  // Vom Diagramm zurückgegebene API (aktuelles renderDiagram-Ergebnis) -
+  // erlaubt Sprünge zu einem bestimmten Zeitpunkt aus der Umlauf-Liste
+  // heraus, ohne dass der Diagramm-Code selbst vom App-Code wissen muss.
+  let diagramApi = null;
+  let globalTMinRef = 0;
 
   const els = {
     btnAddFile: document.getElementById('btnAddFile'),
@@ -26,6 +32,8 @@
     tableBody: document.getElementById('tableBody'),
     statsPanel: document.getElementById('statsPanel'),
     statsBody: document.getElementById('statsBody'),
+    cycleJumpPanel: document.getElementById('cycleJumpPanel'),
+    cycleJumpBody: document.getElementById('cycleJumpBody'),
   };
 
   function showError(msg) {
@@ -46,6 +54,7 @@
     els.diagramPanel.style.display = 'none';
     els.tablePanel.style.display = 'none';
     els.statsPanel.style.display = 'none';
+    els.cycleJumpPanel.style.display = 'none';
   }
 
   /* ---------------- Datei-Import ---------------- */
@@ -386,7 +395,8 @@
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
-    renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    globalTMinRef = globalTMin;
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
     if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
@@ -395,6 +405,7 @@
 
     /* ---- Koordinationsstatistik ---- */
     renderStats(resHin, resRev);
+    renderCycleJump(resHin, resRev);
 
     /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
     const nodes = state.intersections;
@@ -458,6 +469,53 @@
     });
     els.statsBody.innerHTML = rows.join('');
   }
+
+  /* ---------------- Umlauf-Sprungliste ---------------- */
+  // Eine Zeile je realem Umlauf (Ursprungsgrünfenster am ersten Knoten) mit
+  // Erfolg/Misserfolg des Optimum-Bands über den ganzen Streckenzug - Klick
+  // springt im Zeit-Weg-Diagramm direkt zu diesem Zeitpunkt. Bei sehr langen
+  // Aufzeichnungen wird die Liste je Richtung gekappt (Performance), mit
+  // Hinweis auf die Anzahl ausgeblendeter Umläufe.
+  const CYCLE_JUMP_MAX = 500;
+  function renderCycleJump(resHin, resRev) {
+    const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
+      .filter(([, res]) => res.ok && res.optimumBand && res.optimumBand.cycles.length);
+    if (dirs.length === 0) { els.cycleJumpPanel.style.display = 'none'; return; }
+    els.cycleJumpPanel.style.display = 'block';
+    const rows = [];
+    dirs.forEach(([label, res, color]) => {
+      const cycles = res.optimumBand.cycles;
+      const shown = cycles.slice(0, CYCLE_JUMP_MAX);
+      rows.push(`<tr class="stats-dir-row"><td colspan="4" style="color:${color}">${esc(label)} (${cycles.length} Umläufe${cycles.length > CYCLE_JUMP_MAX ? `, erste ${CYCLE_JUMP_MAX} angezeigt` : ''})</td></tr>`);
+      shown.forEach(c => {
+        const statusCls = c.success ? 'stat-ok' : 'stat-bad';
+        const statusText = c.success ? 'Erfolgreich' : 'Gescheitert';
+        const detail = c.success
+          ? `Breite ${c.finalWidth.toFixed(1)} s`
+          : `an ${esc(c.failedAt ? c.failedAt.name : '–')}`;
+        rows.push(`<tr class="cycle-jump-row" data-t="${c.start}" tabindex="0">
+          <td>${esc(fmtElapsed(c.start - globalTMinRef))}</td>
+          <td>${esc(fmtDateTimeShort(c.start))}</td>
+          <td class="${statusCls}">${statusText}</td>
+          <td>${detail}</td>
+        </tr>`);
+      });
+    });
+    els.cycleJumpBody.innerHTML = rows.join('');
+  }
+
+  els.cycleJumpBody.addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-t]');
+    if (!row || !diagramApi) return;
+    diagramApi.scrollToTime(Number(row.dataset.t));
+  });
+  els.cycleJumpBody.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('tr[data-t]');
+    if (!row || !diagramApi) return;
+    e.preventDefault();
+    diagramApi.scrollToTime(Number(row.dataset.t));
+  });
 
   [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput, els.showTimestampInput].forEach(el => el.addEventListener('change', recompute));
 

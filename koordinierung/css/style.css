@@ -156,6 +156,10 @@ input[type=file]{display:none;}
 .stat-warn{color:#8a5a00; font-weight:700;}
 .stat-bad{color:var(--sig-red); font-weight:700;}
 
+.cycle-jump-scroll{max-height:320px; overflow-y:auto;}
+.cycle-jump-row{cursor:pointer;}
+.cycle-jump-row:hover, .cycle-jump-row:focus{background:var(--accent-bg); outline:none;}
+
 /* Tabelle */
 .table-scroll{overflow-x:auto;}
 table{width:100%; border-collapse:collapse; font-size:12px;}
