@@ -21,7 +21,7 @@ body{
   background:var(--bg-app); color:var(--text); font-family:var(--sans);
   font-size:13px; line-height:1.45; padding:14px;
 }
-.app{max-width:1180px;margin:0 auto;border:1px solid var(--border-strong);background:var(--bg-panel);}
+.app{width:100%;margin:0;border:1px solid var(--border-strong);background:var(--bg-panel);}
 
 .titlebar{
   display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px;
@@ -109,10 +109,11 @@ input[type=file]{display:none;}
 .kpi .k-value{font-family:var(--mono); font-size:18px; font-weight:700;}
 .kpi .k-sub{font-size:10px; color:var(--text-faint);}
 .kpi.accent .k-value{color:var(--accent);}
+.kpi.warn .k-value{color:var(--sig-red);}
 
 /* Diagramm */
-.diagram-wrap{padding:0 12px 14px; overflow:auto; max-height:600px; position:relative;}
-.diagram-wrap svg{display:block; margin-top:8px;}
+.diagram-wrap{padding:0 12px 14px; overflow-y:auto; overflow-x:hidden; max-height:600px; position:relative;}
+.diagram-wrap svg{display:block; margin-top:8px; width:100%; height:auto;}
 .diagram-sticky-header{
   position:sticky; top:0; left:0; z-index:4;
   background:var(--bg-panel); border-bottom:1px solid var(--border);
@@ -148,6 +149,12 @@ input[type=file]{display:none;}
 .legend{display:flex; gap:14px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--border); background:var(--bg-panel-alt);}
 .legend .item{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted);}
 .swatch{width:11px; height:11px; border:1px solid rgba(0,0,0,.25); display:inline-block;}
+
+.stats-table .stats-dir-row td{padding-top:12px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border-strong); background:var(--bg-panel-alt);}
+.stats-table .stats-total-row td{font-weight:700; border-top:1px solid var(--border-strong);}
+.stat-ok{color:var(--sig-green); font-weight:700;}
+.stat-warn{color:#8a5a00; font-weight:700;}
+.stat-bad{color:var(--sig-red); font-weight:700;}
 
 /* Tabelle */
 .table-scroll{overflow-x:auto;}

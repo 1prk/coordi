@@ -8,16 +8,22 @@
   'use strict';
   const { esc, fmtTimeShort, fmtDateTimeShort, fmtElapsed } = App.utils;
 
-  const NICE_STEPS_S = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
-  function pickGridStepS(pxPerSec, minPx) {
-    for (const s of NICE_STEPS_S) if (s * pxPerSec >= minPx) return s;
-    return NICE_STEPS_S[NICE_STEPS_S.length - 1];
+  // Rasterschritt als (nette) Bruchteil der Umlaufzeit TU - so landen die
+  // Gitterlinien exakt auf TX-Werten (Sekunde im Umlauf) statt auf
+  // beliebigen "runden" Sekundenzahlen ohne Bezug zum Umlauf.
+  const TU_FRACS = [60, 40, 20, 10, 8, 5, 4, 2, 1];
+  function pickTxGridStep(TU, pxPerSec, minPx) {
+    for (const f of TU_FRACS) {
+      const step = TU / f;
+      if (step * pxPerSec >= minPx) return step;
+    }
+    return TU;
   }
 
-  // dir: {rows, refCycleStarts, lTP, qualitativeBand, proposedBand,
-  //       bandFill, bandStroke, tag: 'H'|'R', tagColor, gridColor} oder null
+  // dir: {rows, lTP, qualitativeBand, optimumBand, bandFill, bandStroke,
+  //       tag: 'H'|'R', tagColor, gridColor} oder null
   function renderDiagram(container, o) {
-    const { TU, showQualitative, showOptimum, globalTMin, globalTMax, hin, rev } = o;
+    const { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin, rev } = o;
     const dirs = [hin, rev].filter(Boolean);
     if (dirs.length === 0 || !(globalTMax > globalTMin)) { container.innerHTML = ''; return; }
 
@@ -26,7 +32,11 @@
     const sMax = Math.max(...allRows.map(r => r.station));
     const corridor = sMax - sMin;
 
-    const mL = 56, mR = 18, mT = 16;
+    // mR großzügig bemessen (nicht nur ein schmaler Rand): die letzte
+    // Stationsbeschriftung (Kopf-/Fußzeile, mittig über der Station
+    // zentriert) reicht sonst über den Zeichenbereich hinaus und erzwingt
+    // horizontales Scrollen im Diagramm-Container.
+    const mL = 56, mR = 56, mT = 16;
     const footerBaseH = 36 + Math.max(0, dirs.length - 1) * 26;
     const mB = footerBaseH + 16; // + Zeile für aktuellen Signalzeitenplan je Knoten
     const wrapWidth = container.clientWidth || 800;
@@ -62,18 +72,29 @@
       + `</pattern></defs>`;
     svg += `<rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}" fill="#fff" stroke="var(--border-strong)"/>`;
 
-    // Gitterlinien mit verstrichener Zeit ab 00:00:00 (Nullpunkt am unteren
-    // Rand) - Schrittweite so gewählt, dass der Abstand zwischen zwei Linien
-    // lesbar bleibt, unabhängig von Umlaufzeit oder Gesamtdauer.
-    const gridStepS = pickGridStepS(pxPerSec, 42);
+    // Gitterlinien nach TX (Sekunde im Umlauf, 0..TU) statt Uhrzeit/verstri-
+    // chener Zeit - die für die Koordinierung relevante Größe. Schrittweite
+    // als Bruchteil von TU gewählt, damit die Linien exakt auf TX-Werten
+    // liegen; der reale Zeitstempel kann optional zusätzlich angezeigt
+    // werden (Checkbox "Zeitstempel anzeigen").
+    const gridStepS = TU ? pickTxGridStep(TU, pxPerSec, showTimestamp ? 54 : 30) : 60;
     const gridStepMs = gridStepS * 1000;
     const firstGrid = Math.ceil(globalTMin / gridStepMs) * gridStepMs;
     for (let t = firstGrid; t <= globalTMax; t += gridStepMs) {
       const y = Y(t);
+      const tx = TU ? Math.round((((t - globalTMin) / 1000) % TU + TU) % TU) : null;
       svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
-      svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-faint)">${fmtElapsed(t - globalTMin)}</text>`;
+      if (showTimestamp) {
+        svg += `<text x="${mL - 6}" y="${(y - 1).toFixed(1)}" text-anchor="end" font-size="9" font-weight="700" fill="var(--text-faint)">TX ${tx}</text>`;
+        svg += `<text x="${mL - 6}" y="${(y + 8).toFixed(1)}" text-anchor="end" font-size="7.5" fill="var(--text-faint)">${fmtTimeShort(t)}</text>`;
+      } else {
+        svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-faint)">TX ${tx}</text>`;
+      }
     }
-    svg += `<text x="12" y="${mT + plotH / 2}" font-size="10" fill="var(--text-muted)" transform="rotate(-90 12 ${mT + plotH / 2})" text-anchor="middle">Verstrichene Zeit ↑ (00:00:00 = ${esc(fmtDateTimeShort(globalTMin))})</text>`;
+    const axisTitle = showTimestamp
+      ? `Umlaufsekunde TX ↑ (Start ${esc(fmtDateTimeShort(globalTMin))})`
+      : `Umlaufsekunde TX ↑ (t_U ${TU ?? '–'} s)`;
+    svg += `<text x="12" y="${mT + plotH / 2}" font-size="10" fill="var(--text-muted)" transform="rotate(-90 12 ${mT + plotH / 2})" text-anchor="middle">${axisTitle}</text>`;
 
     dirs.forEach(d => {
       if (!(d.lTP > 0 && corridor > 0)) return;
@@ -111,34 +132,28 @@
       svg += `<g clip-path="${clip}">${qSvg}</g>`;
     });
 
-    // Optimum-Band: dieselbe (umlaufperiodische) Verengungs-Maske wie zuvor,
-    // aber je Abschnitt an den ECHTEN Umlaufgrenzen des ABFAHRENDEN Knotens
-    // (seg.a.cycleStarts) wiederholt - nicht an denen eines fernen
-    // Bezugsknotens, dessen Uhr real leicht anders läuft und über viele
-    // Umläufe sichtbar "auseinanderdriften" würde. Jeder Abschnitt ist ein
-    // echtes Parallelogramm (konstante Breite, kein Tapern) - die bis
-    // einschließlich des ABFAHRENDEN Knotens gültige (kumulierte) Breite;
-    // ein nachfolgender Knoten mit engerer Grünzeit verengt das Band daher
-    // erst AB seiner eigenen Position als sichtbare Stufe - der Abschnitt
-    // davor kann seine tatsächliche Grünzeit sichtbar über- oder
-    // unterschreiten.
+    // Optimum-Band: aus der REALEN Intervall-Verschneidung (siehe
+    // computeOptimumBand) - keine periodische Wiederholung/Modellannahme
+    // mehr nötig, jeder Lauf trägt bereits seine tatsächlichen absoluten
+    // Zeitstempel. Jeder Abschnitt ist ein echtes Parallelogramm (konstante
+    // Breite, kein Tapern) - die bis einschließlich des ABFAHRENDEN Knotens
+    // gültige (kumulierte) Breite; ein nachfolgender Knoten mit engerer/
+    // versetzter Grünzeit verengt das Band daher erst AB seiner eigenen
+    // Position als sichtbare Stufe - der Abschnitt davor kann seine
+    // tatsächliche Grünzeit sichtbar über- oder unterschreiten.
     dirs.forEach(d => {
-      if (!showOptimum || !d.proposedBand) return;
+      if (!showOptimum || !d.optimumBand) return;
       let propSvg = '';
-      d.proposedBand.segments.forEach(seg => {
+      d.optimumBand.segments.forEach(seg => {
         const xA = X(seg.a.station), xB = X(seg.b.station);
-        const cycleStarts = seg.a.cycleStarts || [];
-        cycleStarts.forEach(ck => {
-          seg.runs.forEach(run => {
-            const frontStart = ck + run.localA0 * 1000, frontEnd = ck + (run.localA0 + run.width) * 1000;
-            const backStart = frontStart + seg.dtSeg * 1000, backEnd = frontEnd + seg.dtSeg * 1000;
-            const yA0 = Y(frontStart), yA1 = Y(frontEnd);
-            const yB0 = Y(backStart), yB1 = Y(backEnd);
-            if (Math.max(yA0, yA1, yB0, yB1) < mT || Math.min(yA0, yA1, yB0, yB1) > mT + plotH) return;
-            const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
-              .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-            propSvg += `<polygon points="${pts}" fill="${hatchFillUrl}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
-          });
+        seg.runs.forEach(run => {
+          const yA0 = Y(run.frontStart), yA1 = Y(run.frontEnd);
+          const yB0 = Y(run.backStart), yB1 = Y(run.backEnd);
+          if (Math.max(yA0, yA1, yB0, yB1) < mT || Math.min(yA0, yA1, yB0, yB1) > mT + plotH) return;
+          const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
+            .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+          const widthS = (run.frontEnd - run.frontStart) / 1000;
+          propSvg += `<polygon points="${pts}" fill="${hatchFillUrl}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${widthS.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
         });
       });
       svg += `<g clip-path="${clip}">${propSvg}</g>`;
@@ -160,12 +175,16 @@
           overlay += `<rect x="${(x - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${h.toFixed(1)}" fill="var(--sig-green)"><title>${esc(r.name)} (${d.tag}): ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
           // An-/Abwurfzeitpunkt (Sekunde im Umlauf) je realem Grünsegment -
           // relativ zum nächstgelegenen eigenen Umlaufbeginn dieses Knotens.
+          // "an" (Anwurf/Start) unten am Grünbalken - Zeit läuft nach oben,
+          // der untere Rand (ye) ist also der frühere/Start-Zeitpunkt;
+          // "ab" (Abwurf/Ende) entsprechend oben (ys).
           const cs = App.parser.findEnclosingCycleStart(seg.start, r.cycleStarts);
           if (cs != null && TU) {
             const an = ((Math.round((seg.start - cs) / 1000) % TU) + TU) % TU;
             const tf = Math.round((seg.end - seg.start) / 1000);
-            const labelY = (ys + ye) / 2;
-            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(labelY + 2.5).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${an}–${an + tf}</text>`;
+            const ab = an + tf;
+            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ye + 7).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${an}</text>`;
+            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ys - 2).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${ab}</text>`;
           }
         });
         svg += `<g clip-path="${clip}">${overlay}</g>`;

@@ -2,12 +2,6 @@
 (function (App) {
   'use strict';
 
-  // Grün-Zugehörigkeit mit Umlauf-Wrap: Grün deckt [an, an+tf) modulo TU ab.
-  function inGreen(t, an, tf, TU) {
-    const d = (((t - an) % TU) + TU) % TU;
-    return d < tf;
-  }
-
   function greenCenter(r, TU) { return (((r.an + r.tf / 2) % TU) + TU) % TU; }
 
   // Progressionsgeschwindigkeit aus den Grünlagen benachbarter Knoten:
@@ -40,27 +34,6 @@
     if (f < 0.05 || f > 0.95) return 'Teilpunkt';
     if (f >= 0.4 && f <= 0.6) return 'Teilpunktferne';
     return f < 0.5 ? 'Teilpunktnähe (rechts)' : 'Teilpunktnähe (links)';
-  }
-
-  // Zusammenhängende (zirkuläre) True-Läufe in einem Bool-Array.
-  function circularRuns(mask) {
-    const n = mask.length;
-    if (n === 0) return [];
-    if (mask.every(Boolean)) return [{ start: 0, len: n }];
-    if (!mask.some(Boolean)) return [];
-    let origin = mask.findIndex((v, i) => v && !mask[(i - 1 + n) % n]);
-    if (origin === -1) origin = 0;
-    const runs = [];
-    let i = 0;
-    while (i < n) {
-      if (mask[(origin + i) % n]) {
-        let len = 0;
-        while (len < n && mask[(origin + i + len) % n]) len++;
-        runs.push({ start: (origin + i) % n, len });
-        i += len;
-      } else i++;
-    }
-    return runs;
   }
 
   // Gemeinsame Reisezeit-Kette (je Abschnitt eigene Geschwindigkeit) - von
@@ -123,72 +96,103 @@
     return { ordered, segments };
   }
 
-  // "Optimum"-Band: das Band, das JEDE Grünzeit im Streckenzug durchgehend
-  // durchläuft - für eine je Abschnitt eigene (feste) Progressionsgeschwin-
-  // digkeit, an welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an
-  // JEDEM vorherigen Knoten noch auf Grün getroffen hat. Der gültige
-  // Zeitbereich kann sich von Knoten zu Knoten nur verengen (nie
-  // vergrößern). Jeder Abschnitt ist ein ECHTES Parallelogramm - konstante
-  // Breite über den gesamten Abschnitt, kein Tapern innerhalb eines
-  // Abschnitts. Die Breite eines Abschnitts ist die bis einschließlich des
-  // ABFAHRENDEN Knotens gültige (kumulierte) Breite; ein Knoten mit
-  // engerer Grünzeit verengt das Band daher sichtbar als Stufe an seiner
-  // eigenen Position, nicht rückwirkend im Abschnitt davor.
+  function intervalsFromSegs(segs) {
+    return (segs || []).map(g => ({ start: g.start, end: g.end }));
+  }
+
+  // Überlappung eines Intervalls mit einer Liste realer Intervalle (0..n
+  // Treffer - üblicherweise 0 oder 1, da reale Grünfenster eines Knotens
+  // sich nicht überschneiden).
+  function intersectIntervalWithList(iv, list) {
+    const out = [];
+    for (const L of list) {
+      const s = Math.max(iv.start, L.start), e = Math.min(iv.end, L.end);
+      if (e > s) out.push({ start: s, end: e });
+    }
+    return out;
+  }
+
+  // "Optimum"-Band: das Band, das JEDE reale Grünzeit im Streckenzug
+  // durchgehend durchläuft. Statt eines periodischen (mod TU) Modells mit
+  // einem einzigen Median-An/Ab-Wert je Knoten wird direkt mit den REALEN
+  // Grünvorkommen jedes Knotens gerechnet: die gültigen Abfahrtsintervalle
+  // am ersten Knoten werden Abschnitt für Abschnitt um die Reisezeit
+  // verschoben und mit den tatsächlichen (realen) Grünfenstern des
+  // nächsten Knotens geschnitten. Was übrig bleibt, ist die kumulierte
+  // Menge an Intervallen, die real durchgehend Grün hatten - ohne
+  // Periodizität vorauszusetzen, daher unempfindlich gegenüber realem
+  // Zeitversatz/Jitter zwischen den Knoten und gegenüber Planwechseln.
   //
-  // Die zugrunde liegende Verengungs-Maske ist ein periodisches (mod TU)
-  // Modell relativ zur Uhr des Bezugsknotens (ordered[0]) - für die
-  // Positionierung in absoluter Zeit wird sie aber NICHT einfach an den
-  // realen Umlaufgrenzen des Bezugsknotens wiederholt (das koppelt jeden
-  // Abschnitt fälschlich an die Uhr eines ANDEREN, ggf. leicht
-  // asynchronen Knotens und lässt den Versatz über viele Umläufe sichtbar
-  // "auseinanderlaufen"). Stattdessen wird je Abschnitt die Phase relativ
-  // zum eigenen Umlauf des ABFAHRENDEN Knotens berechnet (localA0, mod TU)
-  // und an dessen EIGENEN realen Umlaufgrenzen (a.cycleStarts) wiederholt -
-  // nur die Reisezeit DIESES Abschnitts (dtSeg) wird für die Gegenseite
-  // hinzuaddiert, nicht die kumulierte Reisezeit über den ganzen Streckenzug.
-  function computeProposedBand(rows, vpKmhArray, TU, dir) {
+  // Jeder Abschnitt ist ein ECHTES Parallelogramm (konstante Breite, kein
+  // Tapern) - die bis einschließlich des ABFAHRENDEN Knotens gültige
+  // (kumulierte) Breite; ein Knoten mit engerer/versetzter Grünzeit
+  // verengt das Band daher sichtbar als Stufe an seiner eigenen Position.
+  //
+  // Nebenbei liefert dieselbe Rechnung die Grundlage für die
+  // Koordinationsstatistik: je Knoten, wie viele der am ersten Knoten
+  // gestarteten realen Grünfenster dort noch (durchgehend) Grün antreffen
+  // ("erfolgreiche"/"gescheiterte" Koordination je Station), sowie die
+  // Breite (min/mittel/max) des am Ende (über den GESAMTEN Streckenzug)
+  // tatsächlich durchgehenden Bandes.
+  function computeOptimumBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
     if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
-    const step = 0.25;
-    const nS = Math.max(4, Math.round(TU / step));
-    const ref = ordered[0];
     const tau = computeTau(ordered, vpKmhArray);
     if (!tau) return null;
 
-    let mask = new Array(nS);
-    for (let s = 0; s < nS; s++) mask[s] = inGreen(s * step, ref.an, ref.tf, TU);
-    const stageMasks = [mask];
+    let stage = intervalsFromSegs(ordered[0].greenSegs);
+    const stages = [stage];
     for (let i = 1; i < ordered.length; i++) {
-      const r = ordered[i];
-      const prev = stageMasks[i - 1];
-      const next = new Array(nS);
-      for (let s = 0; s < nS; s++) {
-        next[s] = prev[s] && inGreen(s * step + tau[i], r.an, r.tf, TU);
-      }
-      stageMasks.push(next);
+      const dtMs = (tau[i] - tau[i - 1]) * 1000;
+      const shifted = stage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs }));
+      const realList = intervalsFromSegs(ordered[i].greenSegs);
+      const next = [];
+      shifted.forEach(iv => { intersectIntervalWithList(iv, realList).forEach(r => next.push(r)); });
+      stages.push(next);
+      stage = next;
     }
+
+    const widthStats = (list) => {
+      const widths = list.map(iv => (iv.end - iv.start) / 1000).filter(w => w > 0);
+      return widths.length
+        ? { min: Math.min(...widths), max: Math.max(...widths), mean: widths.reduce((a, b) => a + b, 0) / widths.length }
+        : { min: 0, max: 0, mean: 0 };
+    };
 
     const segments = [];
+    const perStation = [];
     for (let i = 1; i < ordered.length; i++) {
-      const a = ordered[i - 1];
-      const tauA = tau[i - 1], dtSeg = tau[i] - tau[i - 1];
-      const runs = circularRuns(stageMasks[i - 1]).map(run => {
-        const t0 = run.start * step;
-        const localA0 = (((t0 + tauA) % TU) + TU) % TU;
-        return { localA0, width: run.len * step };
+      const dtSeg = tau[i] - tau[i - 1];
+      const runs = stages[i - 1].map(iv => ({
+        frontStart: iv.start, frontEnd: iv.end,
+        backStart: iv.start + dtSeg * 1000, backEnd: iv.end + dtSeg * 1000
+      }));
+      segments.push({ a: ordered[i - 1], b: ordered[i], dtSeg, runs, vp_kmh: Number(vpKmhArray[i - 1]) });
+
+      const entering = stages[i - 1].length, surviving = stages[i].length;
+      perStation.push({
+        a: ordered[i - 1], b: ordered[i],
+        entering, surviving, failed: entering - surviving,
+        rate: entering ? surviving / entering : 0,
+        width: widthStats(stages[i])
       });
-      segments.push({ a, b: ordered[i], dtSeg, runs, vp_kmh: Number(vpKmhArray[i - 1]) });
     }
 
-    const finalRuns = circularRuns(stageMasks[stageMasks.length - 1]);
-    const bandwidth = finalRuns.reduce((sum, r) => sum + r.len * step, 0);
+    const finalStage = stages[stages.length - 1];
+    const overall = {
+      totalCycles: stages[0].length,
+      successCount: finalStage.length,
+      failCount: stages[0].length - finalStage.length,
+      rate: stages[0].length ? finalStage.length / stages[0].length : 0,
+      width: widthStats(finalStage)
+    };
 
-    return { ordered, tau, segments, bandwidth };
+    return { ordered, tau, segments, perStation, overall };
   }
 
   App.coordination = {
-    inGreen, greenCenter, deriveVp, teilpunktabstand, lageLabel, circularRuns,
-    computeQualitativeBand, computeProposedBand
+    greenCenter, deriveVp, teilpunktabstand, lageLabel,
+    computeQualitativeBand, computeOptimumBand
   };
 })(window.App = window.App || {});

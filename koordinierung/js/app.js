@@ -2,7 +2,7 @@
 (function (App) {
   'use strict';
   const { esc } = App.utils;
-  const { deriveVp, teilpunktabstand, lageLabel, computeQualitativeBand, computeProposedBand } = App.coordination;
+  const { deriveVp, teilpunktabstand, lageLabel, computeQualitativeBand, computeOptimumBand } = App.coordination;
   const { renderDiagram } = App.diagram;
   const state = App.state;
 
@@ -13,6 +13,7 @@
     bandQualitativeInput: document.getElementById('bandQualitativeInput'),
     bandOptimumInput: document.getElementById('bandOptimumInput'),
     baseStationInput: document.getElementById('baseStationInput'),
+    showTimestampInput: document.getElementById('showTimestampInput'),
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
     hintBox: document.getElementById('hintBox'),
@@ -23,6 +24,8 @@
     diagram: document.getElementById('diagram'),
     tablePanel: document.getElementById('tablePanel'),
     tableBody: document.getElementById('tableBody'),
+    statsPanel: document.getElementById('statsPanel'),
+    statsBody: document.getElementById('statsBody'),
   };
 
   function showError(msg) {
@@ -42,6 +45,7 @@
     els.kpiPanel.style.display = 'none';
     els.diagramPanel.style.display = 'none';
     els.tablePanel.style.display = 'none';
+    els.statsPanel.style.display = 'none';
   }
 
   /* ---------------- Datei-Import ---------------- */
@@ -277,7 +281,7 @@
     // Grünzeit im Zug überhaupt berührt) und "Optimum" (kumulativ, das Band,
     // das durchgehend durch JEDE Grünzeit passt).
     const qualitativeBand = computeQualitativeBand(rows, vpArray, TU, dirTag);
-    const proposedBand = computeProposedBand(rows, vpArray, TU, dirTag);
+    const optimumBand = computeOptimumBand(rows, vpArray, TU, dirTag);
     const ref = dirTag === 'fwd' ? rows[0] : rows[rows.length - 1];
 
     // Zeitlicher Gesamtbereich dieser Richtung (Vereinigung über alle
@@ -286,7 +290,7 @@
     const tRangeMin = Math.min(...rows.map(r => r.tMin));
     const tRangeMax = Math.max(...rows.map(r => r.tMax));
 
-    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vpArray, qualitativeBand, proposedBand, ref, tRangeMin, tRangeMax };
+    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vpArray, qualitativeBand, optimumBand, ref, tRangeMin, tRangeMax };
   }
 
   function recompute() {
@@ -316,7 +320,7 @@
       if (res.spdSpread > 15) {
         msgs.push(`${label}: Progressionsgeschwindigkeit schwankt abschnittsweise deutlich (${Math.min(...res.spd).toFixed(0)}–${Math.max(...res.spd).toFixed(0)} km/h).`);
       }
-      if (!res.proposedBand) {
+      if (!res.optimumBand) {
         msgs.push(`${label}: V_p (Vorschlag) fehlt oder ist 0 auf mindestens einem Abschnitt – kein Grünband berechenbar.`);
       }
       const overlapMin = Math.max(...res.rows.map(r => r.tMin));
@@ -340,15 +344,22 @@
       kpis.push({ label: `Teilpunktabstand l_TP ${tag}`, value: Math.round(res.lTP) + ' m', cls: 'accent' });
       kpis.push({ label: `V_p ${tag} (gemessen)`, value: res.der.vp_kmh.toFixed(1) + ' km/h', cls: 'accent' });
       if (res.bottleneck) kpis.push({ label: `Engste Stelle ${tag}`, value: res.bw.toFixed(0) + ' s', sub: res.bottleneck.name });
-      if (res.proposedBand) {
+      if (res.optimumBand) {
+        const ov = res.optimumBand.overall;
         const vps = res.vpArray.filter(v => v > 0);
         const vpSub = vps.length
           ? (vps.every(v => v === vps[0]) ? `bei ${vps[0]} km/h` : `bei ${Math.min(...vps)}–${Math.max(...vps)} km/h je Abschnitt`)
           : '';
         kpis.push({
           label: `Bandbreite ${tag} (Optimum)`,
-          value: res.proposedBand.bandwidth.toFixed(1) + ' s',
-          sub: res.proposedBand.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : vpSub
+          value: (ov.successCount > 0 ? `${ov.width.min.toFixed(1)}–${ov.width.max.toFixed(1)} s` : '0 s'),
+          sub: ov.successCount <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `Ø ${ov.width.mean.toFixed(1)} s · ${vpSub}`
+        });
+        kpis.push({
+          label: `Koordinationserfolg ${tag}`,
+          value: `${(ov.rate * 100).toFixed(0)} %`,
+          cls: ov.rate >= 0.9 ? 'accent' : (ov.rate < 0.5 ? 'warn' : ''),
+          sub: `${ov.successCount} von ${ov.totalCycles} Umläufen durchgehend`
         });
       }
     });
@@ -362,10 +373,11 @@
     /* ---- Diagramm ---- */
     const showQualitative = els.bandQualitativeInput.checked;
     const showOptimum = els.bandOptimumInput.checked;
+    const showTimestamp = els.showTimestampInput.checked;
     const TU = resHin.ok ? resHin.TU : resRev.TU;
     const toDirGeom = (res, tag, tagColor, gridColor, bandFill, bandStroke) => res.ok ? {
-      rows: res.rows, refCycleStarts: res.orderedRows[0].cycleStarts, lTP: res.lTP,
-      qualitativeBand: res.qualitativeBand, proposedBand: res.proposedBand,
+      rows: res.rows, lTP: res.lTP,
+      qualitativeBand: res.qualitativeBand, optimumBand: res.optimumBand,
       bandFill, bandStroke, tag, tagColor, gridColor,
       tRangeMin: res.tRangeMin, tRangeMax: res.tRangeMax
     } : null;
@@ -374,12 +386,15 @@
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
-    renderDiagram(els.diagram, { TU, showQualitative, showOptimum, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
     if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
     const durH = ((globalTMax - globalTMin) / 3600000).toFixed(1);
     els.diagramInfo.textContent = `${parts.join(' · ')} · gesamte Historie (${durH} h)`;
+
+    /* ---- Koordinationsstatistik ---- */
+    renderStats(resHin, resRev);
 
     /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
     const nodes = state.intersections;
@@ -401,7 +416,50 @@
     }).join('');
   }
 
-  [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput].forEach(el => el.addEventListener('change', recompute));
+  /* ---------------- Koordinationsstatistik ---------------- */
+  // "Erfolgreiche" Koordination = das Optimum-Grünband durchläuft den
+  // Umlauf durchgehend (ohne an einer Station zu "stoppen") bis zum
+  // letzten Knoten. Je Übergang wird zusätzlich gezeigt, WO genau Umläufe
+  // ausscheiden (Eintretend/Erfolgreich/Gescheitert je Station), damit sich
+  // Engpässe im Streckenzug lokalisieren lassen - plus Breite (min/Ø/max)
+  // des tatsächlich durchgehenden Bandes.
+  function renderStats(resHin, resRev) {
+    const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
+      .filter(([, res]) => res.ok && res.optimumBand);
+    if (dirs.length === 0) { els.statsPanel.style.display = 'none'; return; }
+    els.statsPanel.style.display = 'block';
+    const pct = (r) => (r * 100).toFixed(0) + ' %';
+    const rateCls = (r) => r >= 0.9 ? 'stat-ok' : (r < 0.5 ? 'stat-bad' : 'stat-warn');
+    const rows = [];
+    dirs.forEach(([label, res, color]) => {
+      rows.push(`<tr class="stats-dir-row"><td colspan="7" style="color:${color}">${esc(label)}</td></tr>`);
+      res.optimumBand.perStation.forEach(st => {
+        rows.push(`<tr>
+          <td>${esc(st.a.name)} → ${esc(st.b.name)}</td>
+          <td>${st.entering}</td>
+          <td>${st.surviving}</td>
+          <td>${st.failed}</td>
+          <td class="${rateCls(st.rate)}">${pct(st.rate)}</td>
+          <td>${st.surviving > 0 ? st.width.min.toFixed(1) + '–' + st.width.max.toFixed(1) + ' s' : '–'}</td>
+          <td>${st.surviving > 0 ? st.width.mean.toFixed(1) + ' s' : '–'}</td>
+        </tr>`);
+      });
+      const ov = res.optimumBand.overall;
+      const first = res.optimumBand.ordered[0], last = res.optimumBand.ordered[res.optimumBand.ordered.length - 1];
+      rows.push(`<tr class="stats-total-row">
+        <td>Gesamter Streckenzug (${esc(first.name)} → ${esc(last.name)})</td>
+        <td>${ov.totalCycles}</td>
+        <td>${ov.successCount}</td>
+        <td>${ov.failCount}</td>
+        <td class="${rateCls(ov.rate)}">${pct(ov.rate)}</td>
+        <td>${ov.successCount > 0 ? ov.width.min.toFixed(1) + '–' + ov.width.max.toFixed(1) + ' s' : '–'}</td>
+        <td>${ov.successCount > 0 ? ov.width.mean.toFixed(1) + ' s' : '–'}</td>
+      </tr>`);
+    });
+    els.statsBody.innerHTML = rows.join('');
+  }
+
+  [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput, els.showTimestampInput].forEach(el => el.addEventListener('change', recompute));
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {

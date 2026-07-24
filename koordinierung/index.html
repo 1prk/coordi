@@ -26,6 +26,7 @@
       </span>
       <label class="tb-field"><input type="checkbox" id="bandQualitativeInput" checked> Grünband Querschnitt</label>
       <label class="tb-field"><input type="checkbox" id="bandOptimumInput" checked> Grünband Optimum</label>
+      <label class="tb-field"><input type="checkbox" id="showTimestampInput"> Zeitstempel anzeigen</label>
       <span class="tb-field">Basis-Station [m]
         <input type="number" id="baseStationInput" step="10" value="0" title="Station des ersten Hin-Knotens - verschiebt die gesamte Achse (Hin und Rück)">
       </span>
@@ -63,6 +64,25 @@
       <span class="item"><span class="swatch" style="background:repeating-linear-gradient(45deg,rgba(120,190,110,.5) 0 2px,transparent 2px 6px);border:1px solid var(--accent)"></span>Grünband Optimum (R)</span>
     </div>
     <div class="diagram-wrap" id="diagram"></div>
+  </div>
+
+  <div class="panel" id="statsPanel" style="display:none;">
+    <div class="panel-head">Koordinationsstatistik</div>
+    <div class="table-scroll">
+    <table class="stats-table">
+      <thead><tr>
+        <th>Übergang</th>
+        <th>Eintretend</th>
+        <th>Erfolgreich</th>
+        <th>Gescheitert</th>
+        <th>Quote</th>
+        <th>Bandbreite (min–max)</th>
+        <th>Bandbreite (Ø)</th>
+      </tr></thead>
+      <tbody id="statsBody"></tbody>
+    </table>
+    </div>
+    <div class="hint-box" style="margin:0 12px 12px;">Erfolgreiche Koordination = das Optimum-Grünband durchläuft den Umlauf durchgehend bis zum jeweiligen Knoten, ohne an einer Station auf Rot zu treffen. „Eintretend" je Übergang ist die Anzahl der Umläufe, die den vorherigen Knoten noch durchgehend Grün erreicht haben.</div>
   </div>
 
   <div class="panel" id="tablePanel" style="display:none;">
