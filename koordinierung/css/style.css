@@ -118,7 +118,9 @@ input[type=file]{display:none;}
 .swatch{width:11px; height:11px; border:1px solid rgba(0,0,0,.25); display:inline-block;}
 
 /* Tabelle */
+.table-scroll{overflow-x:auto;}
 table{width:100%; border-collapse:collapse; font-size:12px;}
+thead tr:first-child th{text-align:center;}
 th, td{padding:6px 10px; text-align:right; border-bottom:1px solid var(--border);}
 th:first-child, td:first-child{text-align:left;}
 th{

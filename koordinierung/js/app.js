@@ -17,20 +17,14 @@
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
     hintBox: document.getElementById('hintBox'),
+    kpiPanel: document.getElementById('kpiPanel'),
+    kpiGrid: document.getElementById('kpiGrid'),
+    diagramPanel: document.getElementById('diagramPanel'),
+    diagramInfo: document.getElementById('diagramInfo'),
+    diagram: document.getElementById('diagram'),
+    tablePanel: document.getElementById('tablePanel'),
+    tableBody: document.getElementById('tableBody'),
   };
-
-  // Je Richtung ein identischer Satz von DOM-Referenzen (Suffix Hin/Rev).
-  function dirEls(suffix) {
-    return {
-      section: document.getElementById('section' + suffix),
-      kpiGrid: document.getElementById('kpiGrid' + suffix),
-      diagramInfo: document.getElementById('diagramInfo' + suffix),
-      diagram: document.getElementById('diagram' + suffix),
-      tableBody: document.getElementById('tableBody' + suffix),
-    };
-  }
-  const dirHin = dirEls('Hin');
-  const dirRev = dirEls('Rev');
 
   function showError(msg) {
     els.errorBox.textContent = msg;
@@ -44,6 +38,11 @@
     els.hintBox.textContent = msg;
     els.hintBox.className = 'hint-box' + (warn ? ' warn' : '');
     els.hintBox.style.display = msg ? 'block' : 'none';
+  }
+  function hidePanels() {
+    els.kpiPanel.style.display = 'none';
+    els.diagramPanel.style.display = 'none';
+    els.tablePanel.style.display = 'none';
   }
 
   /* ---------------- Datei-Import ---------------- */
@@ -77,8 +76,7 @@
     const nodes = state.intersections;
     if (nodes.length === 0) {
       els.nodeList.innerHTML = '<div class="node-empty">Noch keine Knoten – über "+" eine OCIT-CSV je Knoten hinzufügen.</div>';
-      dirHin.section.style.display = 'none';
-      dirRev.section.style.display = 'none';
+      hidePanels();
       showHint('');
       return;
     }
@@ -134,7 +132,7 @@
     });
   }
 
-  /* ---------------- Berechnung & Darstellung ---------------- */
+  /* ---------------- Berechnung ---------------- */
   // dirKey: 'Hin' -> mainColHin/distanceHin, gefahren aufsteigend (dir='fwd')
   //         'Rev' -> mainColRev/distanceRev, gefahren absteigend (dir='rev')
   function collectRows(dirKey) {
@@ -155,6 +153,7 @@
       if (TUref == null) TUref = n.TU;
       const colInfo = n.columns.find(c => c.index === col);
       rows.push({
+        nodeId: n.id,
         name: n.knotenName || n.fileName,
         sgName: colInfo ? colInfo.name : '',
         station,
@@ -164,93 +163,44 @@
     return { rows, TU: TUref, tus };
   }
 
-  // Rendert Kenngrößen, Diagramm und Tabelle für eine Richtung.
-  function renderDirection(dirKey, dirTag, dirEl, vpProposedInput, bandFill, bandStroke) {
-    const enabled = dirKey === 'Hin' ? (els.dirSelect.value !== 'rev') : (els.dirSelect.value !== 'fwd');
-    if (!enabled) { dirEl.section.style.display = 'none'; return { ok: false }; }
-
+  // Reine Berechnung (keine DOM-Zugriffe) für eine Richtung.
+  function computeDirection(dirKey, dirTag, vpInput, enabled) {
+    if (!enabled) return { ok: false };
     const { rows, TU, tus } = collectRows(dirKey);
-    if (!TU || rows.length < 2) { dirEl.section.style.display = 'none'; return { ok: false, reason: rows.length < 2 ? 'nodes' : 'tu' }; }
-
+    if (!TU || rows.length < 2) return { ok: false, reason: rows.length < 2 ? 'nodes' : 'tu' };
     const sMin = rows[0].station, sMax = rows[rows.length - 1].station;
     const corridor = sMax - sMin;
-    if (corridor <= 0) { dirEl.section.style.display = 'none'; return { ok: false, reason: 'corridor' }; }
+    if (corridor <= 0) return { ok: false, reason: 'corridor' };
 
-    dirEl.section.style.display = 'block';
-
-    const Ncyc = clamp(parseInt(els.cyclesInput.value, 10) || 6, 1, 16);
-    const drawBand = els.bandSelect.value === 'measured';
     const der = deriveVp(rows, TU, dirTag);
     const lTP = teilpunktabstand(TU, dirTag === 'fwd' ? der.vp_kmh : 0, dirTag === 'rev' ? der.vp_kmh : 0);
-
     const entryRows = dirTag === 'fwd' ? rows.slice(0, rows.length - 1) : rows.slice(1);
     const bw = entryRows.length ? Math.min(...entryRows.map(r => r.tf)) : 0;
     const bottleneck = entryRows.length ? entryRows.reduce((a, b) => b.tf < a.tf ? b : a, entryRows[0]) : null;
-
     const spd = der.segs.map(s => s.vp_kmh).filter(v => v > 0);
     const spdSpread = spd.length > 1 ? (Math.max(...spd) - Math.min(...spd)) : 0;
-
-    const kpis = [
-      { label: 'System-Umlaufzeit t_U', value: TU + ' s' },
-      { label: 'Teilpunktabstand l_TP', value: Math.round(lTP) + ' m', cls: 'accent' },
-      { label: 'Knoten im Zug', value: rows.length },
-      { label: 'Streckenlänge', value: corridor + ' m' },
-      { label: 'V_p (gemessen)', value: der.vp_kmh.toFixed(1) + ' km/h', cls: 'accent' },
-    ];
-    if (bottleneck) kpis.push({ label: 'Engste Stelle', value: bw.toFixed(0) + ' s', sub: bottleneck.name });
-
-    const vpProposed = Number(vpProposedInput.value) || 0;
-    const proposedBand = vpProposed > 0 ? computeProposedBand(rows, vpProposed, TU, dirTag) : null;
-    if (proposedBand) {
-      kpis.push({
-        label: 'Bandbreite (Vorschlag)',
-        value: proposedBand.bandwidth.toFixed(1) + ' s',
-        sub: proposedBand.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `bei ${vpProposed} km/h`
-      });
-    }
-
-    dirEl.kpiGrid.innerHTML = kpis.map(k => `
-      <div class="kpi ${k.cls || ''}">
-        <div class="k-label">${k.label}</div>
-        <div class="k-value">${k.value}</div>
-        ${k.sub ? `<div class="k-sub">${esc(k.sub)}</div>` : ''}
-      </div>`).join('');
-
+    const vp = Number(vpInput.value) || 0;
+    const proposedBand = vp > 0 ? computeProposedBand(rows, vp, TU, dirTag) : null;
     const orderedRows = dirTag === 'fwd' ? rows : rows.slice().reverse();
-    renderDiagram(dirEl.diagram, rows, {
-      TU, lTP, Ncyc, drawBand, orderedRows, measuredSegs: der.segs,
-      proposedBand, bandFill, bandStroke
-    });
-    dirEl.diagramInfo.textContent = `${rows.length} Knoten · l_TP ${Math.round(lTP)} m · ${Ncyc} Umläufe`;
-
     const ref = dirTag === 'fwd' ? rows[0] : rows[rows.length - 1];
-    dirEl.tableBody.innerHTML = rows.map((r, i) => {
-      const abstand = i === 0 ? '–' : (r.station - rows[i - 1].station) + ' m';
-      const versatz = (((r.an - ref.an) % TU) + TU) % TU;
-      const E = corridor > 0 && lTP > 0 ? (r.station - sMin) / lTP : 0;
-      const lage = lageLabel(E);
-      return `<tr>
-        <td>${esc(r.name)} <span style="color:var(--text-faint);font-family:var(--sans)">${esc(r.sgName)}</span></td>
-        <td>${r.station} m</td><td>${abstand}</td>
-        <td>${r.an}</td><td>${r.ab}</td><td>${r.tf} s</td>
-        <td>${r === ref ? '0 (Bezug)' : '+' + versatz + ' s'}</td>
-        <td>${E.toFixed(2)}</td><td>${lage}</td>
-      </tr>`;
-    }).join('');
 
-    return { ok: true, tus, spdSpread, spd };
+    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vp, proposedBand, ref };
   }
 
   function recompute() {
-    if (state.intersections.length === 0) {
-      dirHin.section.style.display = 'none';
-      dirRev.section.style.display = 'none';
-      showHint('');
+    if (state.intersections.length === 0) { hidePanels(); showHint(''); return; }
+
+    const dirMode = els.dirSelect.value;
+    const hinEnabled = dirMode !== 'rev';
+    const revEnabled = dirMode !== 'fwd';
+    const resHin = computeDirection('Hin', 'fwd', els.vpFwdInput, hinEnabled);
+    const resRev = computeDirection('Rev', 'rev', els.vpRevInput, revEnabled);
+
+    if (!resHin.ok && !resRev.ok) {
+      hidePanels();
+      showHint('Mindestens zwei Knoten mit gültigem Hauptsignal und einem Abstand größer 0 (je Richtung) auswählen.', true);
       return;
     }
-
-    const resHin = renderDirection('Hin', 'fwd', dirHin, els.vpFwdInput, 'rgba(211,161,37,0.35)', 'rgba(138,90,0,0.7)');
-    const resRev = renderDirection('Rev', 'rev', dirRev, els.vpRevInput, 'rgba(43,108,163,0.30)', 'rgba(43,108,163,0.75)');
 
     const msgs = [];
     [['Hinrichtung', resHin], ['Gegenrichtung', resRev]].forEach(([label, res]) => {
@@ -263,10 +213,72 @@
         msgs.push(`${label}: Progressionsgeschwindigkeit schwankt abschnittsweise deutlich (${Math.min(...res.spd).toFixed(0)}–${Math.max(...res.spd).toFixed(0)} km/h).`);
       }
     });
-    if (!resHin.ok && !resRev.ok) {
-      msgs.push('Mindestens zwei Knoten mit gültigem Hauptsignal und unterschiedlichem Abstand (je Richtung) auswählen.');
-    }
     showHint(msgs.join(' '), msgs.length > 0);
+
+    els.kpiPanel.style.display = 'block';
+    els.diagramPanel.style.display = 'block';
+    els.tablePanel.style.display = 'block';
+
+    /* ---- Kenngrößen ---- */
+    const kpis = [{ label: 'System-Umlaufzeit t_U', value: (resHin.ok ? resHin.TU : resRev.TU) + ' s' }];
+    [['Hin', resHin], ['Rück', resRev]].forEach(([tag, res]) => {
+      if (!res.ok) return;
+      kpis.push({ label: `Knoten im Zug ${tag}`, value: res.rows.length });
+      kpis.push({ label: `Streckenlänge ${tag}`, value: res.corridor + ' m' });
+      kpis.push({ label: `Teilpunktabstand l_TP ${tag}`, value: Math.round(res.lTP) + ' m', cls: 'accent' });
+      kpis.push({ label: `V_p ${tag} (gemessen)`, value: res.der.vp_kmh.toFixed(1) + ' km/h', cls: 'accent' });
+      if (res.bottleneck) kpis.push({ label: `Engste Stelle ${tag}`, value: res.bw.toFixed(0) + ' s', sub: res.bottleneck.name });
+      if (res.proposedBand) {
+        kpis.push({
+          label: `Bandbreite ${tag} (Vorschlag)`,
+          value: res.proposedBand.bandwidth.toFixed(1) + ' s',
+          sub: res.proposedBand.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `bei ${res.vp} km/h`
+        });
+      }
+    });
+    els.kpiGrid.innerHTML = kpis.map(k => `
+      <div class="kpi ${k.cls || ''}">
+        <div class="k-label">${k.label}</div>
+        <div class="k-value">${k.value}</div>
+        ${k.sub ? `<div class="k-sub">${esc(k.sub)}</div>` : ''}
+      </div>`).join('');
+
+    /* ---- Diagramm ---- */
+    const Ncyc = clamp(parseInt(els.cyclesInput.value, 10) || 6, 1, 16);
+    const drawBand = els.bandSelect.value === 'measured';
+    const TU = resHin.ok ? resHin.TU : resRev.TU;
+    const toDirGeom = (res, tag, tagColor, gridColor, bandFill, bandStroke) => res.ok ? {
+      rows: res.rows, orderedRows: res.orderedRows, measuredSegs: res.der.segs, lTP: res.lTP,
+      proposedBand: res.proposedBand, bandFill, bandStroke, tag, tagColor, gridColor
+    } : null;
+    renderDiagram(els.diagram, {
+      TU, Ncyc, drawBand,
+      hin: toDirGeom(resHin, 'H', '#8a5a00', 'rgba(211,161,37,0.6)', 'rgba(211,161,37,0.35)', 'rgba(138,90,0,0.7)'),
+      rev: toDirGeom(resRev, 'R', '#2b6ca3', 'rgba(43,108,163,0.6)', 'rgba(43,108,163,0.30)', 'rgba(43,108,163,0.75)')
+    });
+    const parts = [];
+    if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
+    if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
+    els.diagramInfo.textContent = `${parts.join(' · ')} · ${Ncyc} Umläufe`;
+
+    /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
+    const nodes = state.intersections;
+    els.tableBody.innerHTML = nodes.map(n => {
+      const rHin = resHin.ok ? resHin.rows.find(r => r.nodeId === n.id) : null;
+      const rRev = resRev.ok ? resRev.rows.find(r => r.nodeId === n.id) : null;
+      const cellFor = (res, r) => {
+        if (!res.ok || !r) return '<td>–</td><td>–</td><td>–</td><td>–</td>';
+        const versatz = (((r.an - res.ref.an) % res.TU) + res.TU) % res.TU;
+        const versLabel = r === res.ref ? '0 (Bezug)' : '+' + versatz + ' s';
+        return `<td>${esc(r.sgName)}</td><td>${r.station} m</td><td>${r.an}–${r.ab} (${r.tf}s)</td><td>${versLabel}</td>`;
+      };
+      const label = n.knotenName || n.fileName;
+      return `<tr>
+        <td>${esc(label)}</td>
+        ${cellFor(resHin, rHin)}
+        ${cellFor(resRev, rRev)}
+      </tr>`;
+    }).join('');
   }
 
   [els.dirSelect, els.cyclesInput, els.bandSelect, els.vpFwdInput, els.vpRevInput].forEach(el => el.addEventListener('change', recompute));
