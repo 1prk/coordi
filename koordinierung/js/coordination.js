@@ -112,75 +112,87 @@
     return out;
   }
 
-  // "Optimum"-Band: das Band, das JEDE reale Grünzeit im Streckenzug
-  // durchgehend durchläuft. Statt eines periodischen (mod TU) Modells mit
-  // einem einzigen Median-An/Ab-Wert je Knoten wird direkt mit den REALEN
-  // Grünvorkommen jedes Knotens gerechnet: die gültigen Abfahrtsintervalle
-  // am ersten Knoten werden Abschnitt für Abschnitt um die Reisezeit
-  // verschoben und mit den tatsächlichen (realen) Grünfenstern des
-  // nächsten Knotens geschnitten. Was übrig bleibt, ist die kumulierte
-  // Menge an Intervallen, die real durchgehend Grün hatten - ohne
-  // Periodizität vorauszusetzen, daher unempfindlich gegenüber realem
-  // Zeitversatz/Jitter zwischen den Knoten und gegenüber Planwechseln.
+  // "Optimum"-Band: EINE feste Breite für den GESAMTEN Streckenzug - die
+  // schmalste Grünzeit unter allen durchfahrenen Knoten (der Engpass, das
+  // Minimum, das ein Fahrzeug durch JEDEN Knoten hindurch nutzen kann).
+  // Nicht abschnittsweise verengt/gestuft, sondern konstant über alle
+  // Abschnitte hinweg. Gerechnet im 1-Sekunden-Raster (kleinste Einheit),
+  // passend zur Auflösung der realen Signaldaten (An/Ab/TF sind immer
+  // ganzzahlige Sekunden) - auch die Reisezeit je Abschnitt wird dafür auf
+  // ganze Sekunden gerundet.
   //
-  // Jeder Abschnitt ist ein ECHTES Parallelogramm (konstante Breite, kein
-  // Tapern) - die bis einschließlich des ABFAHRENDEN Knotens gültige
-  // (kumulierte) Breite; ein Knoten mit engerer/versetzter Grünzeit
-  // verengt das Band daher sichtbar als Stufe an seiner eigenen Position.
+  // Statt eines periodischen (mod TU) Modells mit einem Median-An/Ab-Wert
+  // wird mit den REALEN Grünvorkommen jedes Knotens gerechnet: je Knoten
+  // wird zunächst das gültige Startzeitfenster ermittelt, in dem ein
+  // minTf-breites Fenster überhaupt in dieses reale Grünvorkommen passt
+  // (Vorkommen kürzer als minTf liefert kein gültiges Startfenster). Diese
+  // Startzeitfenster werden - wie zuvor - Abschnitt für Abschnitt um die
+  // (gerundete) Reisezeit verschoben und mit denen des nächsten Knotens
+  // geschnitten. Übrig bleiben die Startzeitpunkte, an denen ein
+  // minTf-breites Fenster real durchgehend Grün hätte - ohne Periodizität
+  // vorauszusetzen, daher unempfindlich gegenüber realem Zeitversatz/
+  // Jitter zwischen den Knoten und gegenüber Planwechseln.
   //
   // Nebenbei liefert dieselbe Rechnung die Grundlage für die
   // Koordinationsstatistik: je Knoten, wie viele der am ersten Knoten
-  // gestarteten realen Grünfenster dort noch (durchgehend) Grün antreffen
-  // ("erfolgreiche"/"gescheiterte" Koordination je Station), sowie die
-  // Breite (min/mittel/max) des am Ende (über den GESAMTEN Streckenzug)
-  // tatsächlich durchgehenden Bandes.
+  // gestarteten Startfenster dort noch gültig sind ("erfolgreiche"/
+  // "gescheiterte" Koordination je Station).
   function computeOptimumBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
     if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
-    const tau = computeTau(ordered, vpKmhArray);
-    if (!tau) return null;
+    const tauRaw = computeTau(ordered, vpKmhArray);
+    if (!tauRaw) return null;
+    // Reisezeit je Abschnitt auf ganze Sekunden gerundet (1s-Schrittweite).
+    const tau = [0];
+    for (let i = 1; i < ordered.length; i++) tau.push(tau[i - 1] + Math.round(tauRaw[i] - tauRaw[i - 1]));
 
-    // Jedes Intervall trägt seinen "origin" (Index des ursprünglichen realen
-    // Grünfensters am ersten Knoten) über alle Stufen mit - so lässt sich
-    // hinterher je Ursprungs-Umlauf zurückverfolgen, ob (und ggf. an
-    // welcher Station) er ausgeschieden ist (siehe "cycles" unten, Basis
-    // für die Sprung-Tabelle in der UI).
-    let stage = intervalsFromSegs(ordered[0].greenSegs).map((iv, idx) => ({ ...iv, origin: idx }));
+    // Engpass: die schmalste Grünzeit unter allen Knoten im Streckenzug -
+    // diese (und nur diese) Breite gilt für das ganze Band.
+    const minTf = Math.min(...ordered.map(r => r.tf));
+    if (!(minTf > 0)) return null;
+
+    // Gültiges Startzeitfenster je realem Grünvorkommen: [g.start, g.end -
+    // minTf], d. h. alle Zeitpunkte, an denen ein minTf-breites Fenster
+    // noch vollständig in dieses Vorkommen passt. Vorkommen kürzer als
+    // minTf liefern kein gültiges Fenster (fallen komplett weg).
+    function validStartsFor(node) {
+      return (node.greenSegs || [])
+        .filter(g => Math.round((g.end - g.start) / 1000) >= minTf)
+        .map(g => ({ start: g.start, end: g.end - minTf * 1000, segStart: g.start, segEnd: g.end }));
+    }
+
+    let stage = validStartsFor(ordered[0]).map((iv, idx) => ({ ...iv, origin: idx }));
     const stages = [stage];
     for (let i = 1; i < ordered.length; i++) {
       const dtMs = (tau[i] - tau[i - 1]) * 1000;
       const shifted = stage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs, origin: iv.origin }));
-      const realList = intervalsFromSegs(ordered[i].greenSegs);
+      const nodeValid = validStartsFor(ordered[i]);
       const next = [];
-      shifted.forEach(iv => { intersectIntervalWithList(iv, realList).forEach(r => next.push({ ...r, origin: iv.origin })); });
+      shifted.forEach(iv => { intersectIntervalWithList(iv, nodeValid).forEach(r => next.push({ ...r, origin: iv.origin })); });
       stages.push(next);
       stage = next;
     }
 
-    const widthStats = (list) => {
-      const widths = list.map(iv => (iv.end - iv.start) / 1000).filter(w => w > 0);
-      return widths.length
-        ? { min: Math.min(...widths), max: Math.max(...widths), mean: widths.reduce((a, b) => a + b, 0) / widths.length }
-        : { min: 0, max: 0, mean: 0 };
-    };
-
+    // Je Abschnitt EIN minTf-breites Fenster pro noch gültigem Startfenster
+    // (verankert am frühestmöglichen Startzeitpunkt darin) - überall
+    // dieselbe (konstante) Breite minTf, kein Tapern/Verengen.
     const segments = [];
     const perStation = [];
     for (let i = 1; i < ordered.length; i++) {
-      const dtSeg = tau[i] - tau[i - 1];
-      const runs = stages[i - 1].map(iv => ({
-        frontStart: iv.start, frontEnd: iv.end,
-        backStart: iv.start + dtSeg * 1000, backEnd: iv.end + dtSeg * 1000
-      }));
-      segments.push({ a: ordered[i - 1], b: ordered[i], dtSeg, runs, vp_kmh: Number(vpKmhArray[i - 1]) });
+      const tauA = tau[i - 1], tauB = tau[i];
+      const runs = stages[i - 1].map(iv => {
+        const frontStart = iv.start + tauA * 1000, frontEnd = frontStart + minTf * 1000;
+        const backStart = iv.start + tauB * 1000, backEnd = backStart + minTf * 1000;
+        return { frontStart, frontEnd, backStart, backEnd };
+      });
+      segments.push({ a: ordered[i - 1], b: ordered[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
 
       const entering = stages[i - 1].length, surviving = stages[i].length;
       perStation.push({
         a: ordered[i - 1], b: ordered[i],
         entering, surviving, failed: entering - surviving,
-        rate: entering ? surviving / entering : 0,
-        width: widthStats(stages[i])
+        rate: entering ? surviving / entering : 0
       });
     }
 
@@ -190,7 +202,7 @@
       successCount: finalStage.length,
       failCount: stages[0].length - finalStage.length,
       rate: stages[0].length ? finalStage.length / stages[0].length : 0,
-      width: widthStats(finalStage)
+      bandwidth: minTf
     };
 
     // Je Ursprungs-Umlauf (reales Grünfenster am ersten Knoten) der
@@ -198,22 +210,22 @@
     // erfolgreich (durchgehend bis zum letzten Knoten) oder gescheitert
     // (mit Angabe, an welchem Knoten es zuerst nicht mehr passte).
     const cycles = stages[0].map(start0 => {
-      let lastIv = start0, survivedIdx = 0;
+      let survivedIdx = 0;
       for (let s = 1; s < stages.length; s++) {
         const found = stages[s].find(iv => iv.origin === start0.origin);
         if (!found) break;
-        lastIv = found; survivedIdx = s;
+        survivedIdx = s;
       }
       const success = survivedIdx === stages.length - 1;
       return {
-        start: start0.start, end: start0.end,
+        start: start0.segStart, end: start0.segEnd,
         success,
         failedAt: success ? null : ordered[survivedIdx + 1],
-        finalWidth: success ? (lastIv.end - lastIv.start) / 1000 : null
+        finalWidth: success ? minTf : null
       };
     });
 
-    return { ordered, tau, segments, perStation, overall, cycles };
+    return { ordered, tau, minTf, segments, perStation, overall, cycles };
   }
 
   App.coordination = {

@@ -59,9 +59,9 @@
       <span class="item"><span style="color:#8a5a00;font-weight:700;font-family:var(--mono);font-size:11px;">H</span> Hinrichtung</span>
       <span class="item"><span style="color:var(--accent);font-weight:700;font-family:var(--mono);font-size:11px;">R</span> Gegenrichtung</span>
       <span class="item"><span class="swatch" style="background:repeating-linear-gradient(45deg,rgba(27,94,32,.35) 0 2px,transparent 2px 6px);border:1px solid #1b5e20;"></span>Grünband Querschnitt (H) – dunkelgrün, je reales Grünsegment des abfahrenden Knotens, keine Verengung</span>
-      <span class="item"><span class="swatch" style="background:repeating-linear-gradient(-45deg,rgba(57,255,20,.35) 0 2px,transparent 2px 6px);border:1px solid #39ff14;"></span>Grünband Optimum (H) – neongrün, durchgehend durch jede Grünzeit</span>
+      <span class="item"><span class="swatch" style="background:repeating-linear-gradient(-45deg,rgba(57,255,20,.35) 0 2px,transparent 2px 6px);border:1px solid #39ff14;"></span>Grünband Optimum (H) – neongrün, konstante Breite = Engpass-Grünzeit im Streckenzug</span>
       <span class="item"><span class="swatch" style="background:repeating-linear-gradient(-45deg,rgba(11,61,145,.35) 0 2px,transparent 2px 6px);border:1px solid #0b3d91;"></span>Grünband Querschnitt (R) – dunkelblau</span>
-      <span class="item"><span class="swatch" style="background:repeating-linear-gradient(45deg,rgba(0,229,255,.35) 0 2px,transparent 2px 6px);border:1px solid #00e5ff;"></span>Grünband Optimum (R) – neonblau</span>
+      <span class="item"><span class="swatch" style="background:repeating-linear-gradient(45deg,rgba(0,229,255,.35) 0 2px,transparent 2px 6px);border:1px solid #00e5ff;"></span>Grünband Optimum (R) – neonblau, konstante Breite = Engpass-Grünzeit</span>
     </div>
     <div class="diagram-wrap" id="diagram"></div>
   </div>
@@ -76,13 +76,12 @@
         <th>Erfolgreich</th>
         <th>Gescheitert</th>
         <th>Quote</th>
-        <th>Bandbreite (min–max)</th>
-        <th>Bandbreite (Ø)</th>
+        <th>Bandbreite</th>
       </tr></thead>
       <tbody id="statsBody"></tbody>
     </table>
     </div>
-    <div class="hint-box" style="margin:0 12px 12px;">Erfolgreiche Koordination = das Optimum-Grünband durchläuft den Umlauf durchgehend bis zum jeweiligen Knoten, ohne an einer Station auf Rot zu treffen. „Eintretend" je Übergang ist die Anzahl der Umläufe, die den vorherigen Knoten noch durchgehend Grün erreicht haben.</div>
+    <div class="hint-box" style="margin:0 12px 12px;">Erfolgreiche Koordination = das Optimum-Grünband durchläuft den Umlauf durchgehend bis zum jeweiligen Knoten, ohne an einer Station auf Rot zu treffen. „Eintretend" je Übergang ist die Anzahl der Umläufe, die den vorherigen Knoten noch durchgehend Grün erreicht haben. Die Bandbreite ist die schmalste Grünzeit im gesamten Streckenzug (Engpass) und über alle Abschnitte konstant.</div>
   </div>
 
   <div class="panel" id="cycleJumpPanel" style="display:none;">

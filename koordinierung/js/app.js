@@ -361,8 +361,8 @@
           : '';
         kpis.push({
           label: `Bandbreite ${tag} (Optimum)`,
-          value: (ov.successCount > 0 ? `${ov.width.min.toFixed(1)}–${ov.width.max.toFixed(1)} s` : '0 s'),
-          sub: ov.successCount <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `Ø ${ov.width.mean.toFixed(1)} s · ${vpSub}`
+          value: `${ov.bandwidth} s`,
+          sub: ov.successCount <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit (Engpass zu schmal)' : `Engpass-Grünzeit, konstant je Abschnitt · ${vpSub}`
         });
         kpis.push({
           label: `Koordinationserfolg ${tag}`,
@@ -443,7 +443,8 @@
     const rateCls = (r) => r >= 0.9 ? 'stat-ok' : (r < 0.5 ? 'stat-bad' : 'stat-warn');
     const rows = [];
     dirs.forEach(([label, res, color]) => {
-      rows.push(`<tr class="stats-dir-row"><td colspan="7" style="color:${color}">${esc(label)}</td></tr>`);
+      const bw = res.optimumBand.minTf;
+      rows.push(`<tr class="stats-dir-row"><td colspan="6" style="color:${color}">${esc(label)} · Engpass-Bandbreite ${bw} s (konstant)</td></tr>`);
       res.optimumBand.perStation.forEach(st => {
         rows.push(`<tr>
           <td>${esc(st.a.name)} → ${esc(st.b.name)}</td>
@@ -451,8 +452,7 @@
           <td>${st.surviving}</td>
           <td>${st.failed}</td>
           <td class="${rateCls(st.rate)}">${pct(st.rate)}</td>
-          <td>${st.surviving > 0 ? st.width.min.toFixed(1) + '–' + st.width.max.toFixed(1) + ' s' : '–'}</td>
-          <td>${st.surviving > 0 ? st.width.mean.toFixed(1) + ' s' : '–'}</td>
+          <td>${st.surviving > 0 ? bw + ' s' : '–'}</td>
         </tr>`);
       });
       const ov = res.optimumBand.overall;
@@ -463,8 +463,7 @@
         <td>${ov.successCount}</td>
         <td>${ov.failCount}</td>
         <td class="${rateCls(ov.rate)}">${pct(ov.rate)}</td>
-        <td>${ov.successCount > 0 ? ov.width.min.toFixed(1) + '–' + ov.width.max.toFixed(1) + ' s' : '–'}</td>
-        <td>${ov.successCount > 0 ? ov.width.mean.toFixed(1) + ' s' : '–'}</td>
+        <td>${ov.successCount > 0 ? bw + ' s' : '–'}</td>
       </tr>`);
     });
     els.statsBody.innerHTML = rows.join('');

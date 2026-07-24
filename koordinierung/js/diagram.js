@@ -243,6 +243,11 @@
       });
     });
 
+    // Horizontale Orientierungslinie, die der Maus beim Überfahren des
+    // Diagramms folgt (siehe mousemove weiter unten) - erleichtert das
+    // Vergleichen einer Zeitposition über mehrere Knoten/Stationen hinweg.
+    svg += `<line id="hoverLine" x1="${mL}" y1="0" x2="${mL + plotW}" y2="0" stroke="var(--text)" stroke-width="1" stroke-dasharray="4 3" opacity="0" pointer-events="none"/>`;
+
     svg += `</svg>`;
 
     // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung.
@@ -345,9 +350,13 @@
     }
 
     // Snappy Tooltip: zeigt beim Bewegen der Maus die verstrichene Zeit und
-    // den vollen Meter an der Cursorposition an.
+    // den vollen Meter an der Cursorposition an - plus eine horizontale
+    // Orientierungslinie über die gesamte Diagrammbreite an derselben
+    // Y-Position, damit sich eine Zeitposition über mehrere Stationen
+    // hinweg vergleichen lässt.
     const svgEl = container.querySelector('svg');
     const tooltipEl = container.querySelector('.diagram-tooltip');
+    const hoverLineEl = container.querySelector('#hoverLine');
     if (svgEl && tooltipEl) {
       svgEl.addEventListener('mousemove', (e) => {
         const rect = svgEl.getBoundingClientRect();
@@ -356,6 +365,7 @@
         const localY = (e.clientY - rect.top) * scaleY;
         if (localX < mL || localX > mL + plotW || localY < mT || localY > mT + plotH) {
           tooltipEl.style.display = 'none';
+          if (hoverLineEl) hoverLineEl.setAttribute('opacity', '0');
           return;
         }
         const tMs = globalTMin + (mT + plotH - localY) / pxPerSec * 1000;
@@ -365,8 +375,16 @@
         tooltipEl.style.left = (e.clientX - hostRect.left + container.scrollLeft + 14) + 'px';
         tooltipEl.style.top = (e.clientY - hostRect.top + container.scrollTop - 26) + 'px';
         tooltipEl.style.display = 'block';
+        if (hoverLineEl) {
+          hoverLineEl.setAttribute('y1', localY.toFixed(1));
+          hoverLineEl.setAttribute('y2', localY.toFixed(1));
+          hoverLineEl.setAttribute('opacity', '0.8');
+        }
       });
-      svgEl.addEventListener('mouseleave', () => { tooltipEl.style.display = 'none'; });
+      svgEl.addEventListener('mouseleave', () => {
+        tooltipEl.style.display = 'none';
+        if (hoverLineEl) hoverLineEl.setAttribute('opacity', '0');
+      });
     }
 
     return { scrollToTime };
