@@ -99,29 +99,17 @@
     return { ordered, segments };
   }
 
-  // Enthält das (mod TU periodische) Intervall "parent" das Intervall
-  // "child" vollständig? Für die Zuordnung Kind-Lauf -> Eltern-Lauf beim
-  // Tapern des Optimum-Bandes.
-  function intervalContainsMod(parent, child, TU) {
-    const pLen = parent.t0b - parent.t0a, cLen = child.t0b - child.t0a;
-    if (cLen > pLen + 1e-6) return false;
-    const pA = ((parent.t0a % TU) + TU) % TU;
-    let cA = ((child.t0a % TU) + TU) % TU;
-    if (cA < pA - 1e-6) cA += TU;
-    return cA >= pA - 1e-6 && (cA + cLen) <= (pA + pLen) + 1e-6;
-  }
-
   // "Optimum"-Band: das Band, das JEDE Grünzeit im Streckenzug durchgehend
   // durchläuft - für eine je Abschnitt eigene (feste) Progressionsgeschwin-
   // digkeit, an welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an
   // JEDEM nachfolgenden Knoten noch auf Grün trifft. Der gültige Zeitbereich
-  // kann sich von Knoten zu Knoten nur verengen (nie vergrößern) - die
-  // Breite startet bei der Grünzeit des Bezugsknotens und wird an jedem
-  // weiteren Knoten auf dessen Grünzeit beschnitten. Jeder Abschnitt tapert
-  // dabei von der bis zum ABFAHRENDEN Knoten gültigen Breite (nahes Ende) zur
-  // bis zum ANKOMMENDEN Knoten gültigen (u. U. engeren) Breite (fernes Ende) -
-  // die Verengung durch einen Knoten wird also sichtbar erst AB diesem
-  // Knoten wirksam, nicht schon rückwirkend im gesamten Abschnitt davor.
+  // kann sich von Knoten zu Knoten nur verengen (nie vergrößern). Jeder
+  // Abschnitt ist ein ECHTES Parallelogramm - konstante Breite über den
+  // gesamten Abschnitt, kein Tapern innerhalb eines Abschnitts. Die Breite
+  // eines Abschnitts ist die bis einschließlich des ANKOMMENDEN Knotens
+  // gültige (kumulierte) Breite; ein Knoten mit engerer Grünzeit verengt das
+  // Band daher sichtbar als Stufe an seiner eigenen Position, nicht als
+  // Taper im Abschnitt davor oder danach.
   function computeProposedBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
@@ -144,20 +132,22 @@
       }
       stageMasks.push(next);
     }
-    const runsOf = mask => circularRuns(mask).map(run => ({ t0a: run.start * step, t0b: (run.start + run.len) * step }));
 
+    // Je Abschnitt zeigt das Parallelogramm den kumulierten Zustand BIS
+    // EINSCHLIESSLICH des ABFAHRENDEN Knotens (stageMasks[i-1]) - NICHT
+    // zusätzlich durch den ankommenden Knoten verengt. So bleibt die Breite
+    // eines Abschnitts an der Position des abfahrenden Knotens verankert
+    // (Stufe an dessen eigener Grünzeit) und das Parallelogramm kann die
+    // tatsächliche Grünzeit des nächsten Knotens sichtbar über- oder
+    // unterschreiten - genau das macht mangelnde Koordination sichtbar,
+    // statt sie durch Vor-Verengung zu verstecken.
     const segments = [];
     for (let i = 1; i < ordered.length; i++) {
-      const prevRuns = runsOf(stageMasks[i - 1]);
-      const curRuns = runsOf(stageMasks[i]);
-      const runs = curRuns.map(cur => {
-        const parent = prevRuns.find(p => intervalContainsMod(p, cur, TU)) || cur;
-        return {
-          t0aNear: parent.t0a, t0bNear: parent.t0b,
-          t0aFar: cur.t0a, t0bFar: cur.t0b,
-          width: cur.t0b - cur.t0a
-        };
-      });
+      const runs = circularRuns(stageMasks[i - 1]).map(run => ({
+        t0a: run.start * step,
+        t0b: (run.start + run.len) * step,
+        width: run.len * step
+      }));
       segments.push({ a: ordered[i - 1], b: ordered[i], tauA: tau[i - 1], tauB: tau[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
     }
 

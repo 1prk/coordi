@@ -97,11 +97,13 @@
     });
 
     // Optimum-Band: dieselbe (umlaufperiodische) Verengungs-Maske wie zuvor,
-    // aber je Abschnitt vom Wert am ABFAHRENDEN Knoten (nahes Ende) zum Wert
-    // am ANKOMMENDEN Knoten (fernes Ende, ggf. enger) tapernd, wiederholt an
-    // den ECHTEN Umlaufgrenzen des Bezugsknotens über die gesamte
-    // Aufzeichnung - die Verengung durch einen Knoten wird sichtbar erst AB
-    // diesem Knoten wirksam, nicht schon rückwirkend im Abschnitt davor.
+    // wiederholt an den ECHTEN Umlaufgrenzen des Bezugsknotens über die
+    // gesamte Aufzeichnung. Jeder Abschnitt ist ein echtes Parallelogramm
+    // (konstante Breite, kein Tapern) - die bis einschließlich des
+    // ABFAHRENDEN Knotens gültige (kumulierte) Breite; ein nachfolgender
+    // Knoten mit engerer Grünzeit verengt das Band daher erst AB seiner
+    // eigenen Position als sichtbare Stufe - der Abschnitt davor kann seine
+    // tatsächliche Grünzeit sichtbar über- oder unterschreiten.
     dirs.forEach(d => {
       if (!showOptimum || !d.proposedBand || !d.refCycleStarts || !d.refCycleStarts.length) return;
       let propSvg = '';
@@ -109,8 +111,8 @@
         d.proposedBand.segments.forEach(seg => {
           const xA = X(seg.a.station), xB = X(seg.b.station);
           seg.runs.forEach(run => {
-            const yA0 = Y(cs + (run.t0aNear + seg.tauA) * 1000), yA1 = Y(cs + (run.t0bNear + seg.tauA) * 1000);
-            const yB0 = Y(cs + (run.t0aFar + seg.tauB) * 1000), yB1 = Y(cs + (run.t0bFar + seg.tauB) * 1000);
+            const yA0 = Y(cs + (run.t0a + seg.tauA) * 1000), yA1 = Y(cs + (run.t0b + seg.tauA) * 1000);
+            const yB0 = Y(cs + (run.t0a + seg.tauB) * 1000), yB1 = Y(cs + (run.t0b + seg.tauB) * 1000);
             if (Math.max(yA0, yA1, yB0, yB1) < mT || Math.min(yA0, yA1, yB0, yB1) > mT + plotH) return;
             const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
               .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
