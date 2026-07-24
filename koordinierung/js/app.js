@@ -83,26 +83,29 @@
     els.nodeList.innerHTML = nodes.map((n, i) => {
       const label = n.knotenName || n.fileName;
       const sub = n.knotenNr ? `Nr. ${esc(n.knotenNr)}` : '';
-      // Hin zählt vorwärts ab der ersten Karte (Station 0 dort); Rück zählt
-      // rückwärts ab der letzten Karte - "Abstand Rück" auf einer Karte ist
-      // daher der Abstand zur NÄCHSTEN Karte (Richtung Ende), nicht zur
-      // vorherigen. Die letzte Karte hat keinen "nächsten" Knoten mehr - dort
-      // wird stattdessen der Versatz zwischen Hin- und Rück-Signalgruppe
-      // abgefragt, der die sonst eigenständige Rück-Stationierung auf die
-      // Hin-Achse verankert (ohne Eingabe wären beide Richtungen an diesem
-      // Knoten fälschlich an derselben Stelle angenommen).
+      // "Abstand Hin" UND "Abstand Rück" auf derselben Karte beschreiben
+      // denselben Streckenabschnitt (zur vorherigen Karte) - nur mit
+      // eigenständigen (leicht abweichenden) Werten je Richtung, z. B. bei
+      // versetzten Haltlinien. Beide Felder sind daher an der ERSTEN Karte
+      // deaktiviert (kein Vorgänger). Die LETZTE Karte hat statt "Abstand
+      // Rück" den "Versatz Rück": den Positionsunterschied zwischen Rück-
+      // und Hin-Signalgruppe an diesem Knoten. Er verankert die Rück-
+      // Stationierung auf derselben Achse wie Hin (ohne Eingabe würde der
+      // letzte, nicht separat erfasste Rück-Abschnitt einfach den
+      // Hin-Wert übernehmen).
       const hinDisabled = i === 0;
-      const isLast = i === nodes.length - 1;
+      const revDisabled = i === 0;
+      const isLast = i === nodes.length - 1 && nodes.length > 1;
       const distHin = hinDisabled ? 0 : n.distanceHin;
-      const distRev = isLast ? 0 : n.distanceRev;
+      const distRev = revDisabled ? 0 : n.distanceRev;
       const revField = isLast
         ? `<div class="node-field rev">
             <label>Versatz Rück [m]</label>
-            <input type="number" class="node-dist-input node-rev-offset" step="1" value="${n.revOffset || 0}" title="Abstand der Rück- zur Hin-Signalgruppe an diesem (letzten) Knoten">
+            <input type="number" class="node-dist-input node-rev-offset" step="1" value="${n.revOffset || 0}" title="Positionsunterschied der Rück- zur Hin-Signalgruppe an diesem (letzten) Knoten">
           </div>`
         : `<div class="node-field rev">
             <label>Abstand Rück [m]</label>
-            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}">
+            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}" ${revDisabled ? 'disabled' : ''}>
           </div>`;
       return `<div class="node-card" data-id="${n.id}">
         <div class="node-order">
@@ -151,21 +154,33 @@
   }
 
   /* ---------------- Berechnung ---------------- */
-  // dirKey: 'Hin' -> mainColHin/distanceHin, gefahren aufsteigend (dir='fwd').
-  //         Station 0 an der ERSTEN Karte, "Abstand Hin" auf Karte i ist der
-  //         Abstand zur vorherigen Karte.
+  // Hin und Rück teilen sich EINE Achse entlang des Straßenzugs - Karte i
+  // steht für denselben physischen Knoten in beiden Richtungen, nur mit
+  // eigenständigen (leicht abweichenden) Abstandswerten je Richtung. Beide
+  // Stationsketten müssen daher in derselben Reihenfolge (mit der Karten-
+  // liste) aufsteigen; ein bloßer "rückwärts gezählter" Versatz würde sonst
+  // die Rück-Richtung spiegeln statt sie der Hin-Achse zu überlagern - genau
+  // das war der vorherige Fehler (Streckenlänge verdoppelte sich).
   //
-  //         'Rev' -> mainColRev/distanceRev, gefahren absteigend (dir='rev').
-  //         Station 0 an der LETZTEN Karte, "Abstand Rück" auf Karte i ist
-  //         der Abstand zur NÄCHSTEN Karte (Richtung Ende) - die Karten
-  //         werden daher von hinten nach vorn durchlaufen, damit die
-  //         zurückgegebenen Zeilen wie bei Hin aufsteigend nach Station
-  //         sortiert sind.
-  // stationShift verschiebt (nur für 'Rev' relevant) die sonst bei 0 an der
-  // letzten Karte verankerten Stationen auf die gemeinsame Hin-Achse - siehe
-  // computeDirection/recompute.
-  function collectRows(dirKey, stationShift) {
-    const shift = stationShift || 0;
+  // Hin: Station 0 an der ersten Karte, "Abstand Hin" auf Karte i = Abstand
+  // zur vorherigen Karte (deaktiviert an Karte 0).
+  //
+  // Rück: dieselbe Konvention ("Abstand Rück" auf Karte i = Abstand zur
+  // vorherigen Karte, deaktiviert an Karte 0), aber ohne eigenen Wert an der
+  // LETZTEN Karte (dort steht stattdessen "Versatz Rück"). Die Stationen
+  // werden daher rückwärts ab der letzten Karte aufgebaut: deren Position
+  // ergibt sich aus Hin-Station + Versatz, jede vorherige Karte zieht davon
+  // ihren (Rück-)Abstand zur jeweils nächsten Karte ab. Für den fehlenden
+  // letzten Abschnitt (an der letzten Karte gibt es kein "Abstand Rück"
+  // mehr) wird ersatzweise der Hin-Abstand verwendet.
+  function hinTotalLength() {
+    const nodes = state.intersections;
+    let total = 0;
+    for (let i = 1; i < nodes.length; i++) total += Number(nodes[i].distanceHin) || 0;
+    return total;
+  }
+
+  function collectRows(dirKey) {
     const nodes = state.intersections;
     const rows = [];
     let TUref = null;
@@ -188,34 +203,35 @@
       });
     };
 
-    let station = 0;
     if (dirKey === 'Hin') {
+      let station = 0;
       for (let i = 0; i < nodes.length; i++) {
         if (i > 0) station += Number(nodes[i].distanceHin) || 0;
         pushRow(nodes[i], station);
       }
     } else {
-      for (let i = nodes.length - 1; i >= 0; i--) {
-        if (i < nodes.length - 1) station += Number(nodes[i].distanceRev) || 0;
-        pushRow(nodes[i], station + shift);
+      const N = nodes.length;
+      const stations = new Array(N);
+      const last = N - 1;
+      stations[last] = hinTotalLength() + (Number(nodes[last]?.revOffset) || 0);
+      for (let i = last - 1; i >= 0; i--) {
+        // Abschnitt (i, i+1): normalerweise "Abstand Rück" von Karte i+1;
+        // für den letzten Abschnitt (i+1 === last) ersatzweise Hin-Abstand,
+        // da die letzte Karte kein eigenes "Abstand Rück" mehr hat.
+        const gap = (i + 1 === last)
+          ? Number(nodes[last].distanceHin) || 0
+          : Number(nodes[i + 1].distanceRev) || 0;
+        stations[i] = stations[i + 1] - gap;
       }
+      for (let i = 0; i < N; i++) pushRow(nodes[i], stations[i]);
     }
     return { rows, TU: TUref, tus };
   }
 
-  // Summe aller "Abstand Hin"-Werte - die Position der letzten Karte auf der
-  // Hin-Achse, unabhängig davon, ob ihr Hauptsignal Hin gültig ist.
-  function hinTotalLength() {
-    const nodes = state.intersections;
-    let total = 0;
-    for (let i = 1; i < nodes.length; i++) total += Number(nodes[i].distanceHin) || 0;
-    return total;
-  }
-
   // Reine Berechnung (keine DOM-Zugriffe) für eine Richtung.
-  function computeDirection(dirKey, dirTag, vpInput, enabled, stationShift) {
+  function computeDirection(dirKey, dirTag, vpInput, enabled) {
     if (!enabled) return { ok: false };
-    const { rows, TU, tus } = collectRows(dirKey, stationShift);
+    const { rows, TU, tus } = collectRows(dirKey);
     if (!TU || rows.length < 2) return { ok: false, reason: rows.length < 2 ? 'nodes' : 'tu' };
     const sMin = rows[0].station, sMax = rows[rows.length - 1].station;
     const corridor = sMax - sMin;
@@ -242,10 +258,8 @@
     const dirMode = els.dirSelect.value;
     const hinEnabled = dirMode !== 'rev';
     const revEnabled = dirMode !== 'fwd';
-    const lastNode = state.intersections[state.intersections.length - 1];
-    const revShift = hinTotalLength() + (Number(lastNode?.revOffset) || 0);
-    const resHin = computeDirection('Hin', 'fwd', els.vpFwdInput, hinEnabled, 0);
-    const resRev = computeDirection('Rev', 'rev', els.vpRevInput, revEnabled, revShift);
+    const resHin = computeDirection('Hin', 'fwd', els.vpFwdInput, hinEnabled);
+    const resRev = computeDirection('Rev', 'rev', els.vpRevInput, revEnabled);
 
     if (!resHin.ok && !resRev.ok) {
       hidePanels();
