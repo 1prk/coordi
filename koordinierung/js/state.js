@@ -33,7 +33,12 @@
       // [m] zwischen der Rück- und der Hin-Signalgruppe an diesem Knoten
       // (z. B. versetzte Haltlinien) - verankert die sonst eigenständige
       // Rückrichtungs-Stationierung auf der Hinrichtungs-Achse.
-      revOffset: 0
+      revOffset: 0,
+      // Vorgeschlagene Progressionsgeschwindigkeit [km/h] je Abschnitt (zur
+      // vorherigen Karte in Hin-, zur nächsten Karte in Rück-Richtung) -
+      // bestimmt das Grünband für genau diesen Abschnitt.
+      vpHin: 50,
+      vpRev: 50
     };
   }
 

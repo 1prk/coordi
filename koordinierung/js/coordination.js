@@ -63,22 +63,34 @@
     return runs;
   }
 
-  // Prüft für eine vorgegebene (feste) Progressionsgeschwindigkeit VpKmh, an
-  // welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an JEDEM
+  // Prüft für eine je Abschnitt eigene (feste) Progressionsgeschwindigkeit
+  // (vpKmhArray[i] = Geschwindigkeit zwischen ordered[i] und ordered[i+1]),
+  // an welchen Abfahrtszeiten t0 am Bezugsknoten ein Fahrzeug an JEDEM
   // nachfolgenden Knoten noch auf Grün trifft. Der gültige Zeitbereich kann
-  // sich von Knoten zu Knoten nur verengen (nie vergrößern) - je Abschnitt
-  // wird daher der kumulierte Gültigkeitsbereich bis einschließlich des
-  // jeweils erreichten Knotens zurückgegeben, sodass sich beim Rendern genau
-  // an der Stelle, an der ein Knoten den Bereich beschneidet, eine sichtbare
-  // Verengung ("Abschneiden") des Bandes ergibt.
-  function computeProposedBand(rows, VpKmh, TU, dir) {
-    if (!VpKmh || VpKmh <= 0 || !TU || rows.length < 2) return null;
+  // sich von Knoten zu Knoten nur verengen (nie vergrößern) - die Breite
+  // startet bei der Grünzeit des Bezugsknotens und wird an jedem weiteren
+  // Knoten auf dessen Grünzeit beschnitten (nie wieder verbreitert), auch
+  // wenn dieser Knoten eine breitere Grünzeit hätte - je Abschnitt wird der
+  // kumulierte Gültigkeitsbereich bis einschließlich des jeweils erreichten
+  // Knotens zurückgegeben, sodass sich beim Rendern genau an der Stelle, an
+  // der ein Knoten den Bereich beschneidet, eine sichtbare Verengung
+  // ("Abschneiden") des Bandes ergibt.
+  function computeProposedBand(rows, vpKmhArray, TU, dir) {
+    if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
-    const Vp_ms = VpKmh / 3.6;
+    if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
     const step = 0.25;
     const nS = Math.max(4, Math.round(TU / step));
     const ref = ordered[0];
-    const tau = ordered.map(r => Math.abs(r.station - ref.station) / Vp_ms);
+
+    // Kumulative Reisezeit mit je Abschnitt eigener Geschwindigkeit.
+    const tau = [0];
+    for (let i = 1; i < ordered.length; i++) {
+      const vp = Number(vpKmhArray[i - 1]);
+      if (!vp || vp <= 0) return null;
+      const dl = Math.abs(ordered[i].station - ordered[i - 1].station);
+      tau.push(tau[i - 1] + dl / (vp / 3.6));
+    }
 
     let mask = new Array(nS);
     for (let s = 0; s < nS; s++) mask[s] = inGreen(s * step, ref.an, ref.tf, TU);
@@ -100,13 +112,13 @@
         t0b: (run.start + run.len) * step,
         width: run.len * step
       }));
-      segments.push({ a: ordered[i - 1], b: ordered[i], tauA: tau[i - 1], tauB: tau[i], runs });
+      segments.push({ a: ordered[i - 1], b: ordered[i], tauA: tau[i - 1], tauB: tau[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
     }
 
     const finalRuns = circularRuns(stageMasks[stageMasks.length - 1]);
     const bandwidth = finalRuns.reduce((sum, r) => sum + r.len * step, 0);
 
-    return { ordered, tau, segments, bandwidth, Vp_kmh: VpKmh };
+    return { ordered, tau, segments, bandwidth };
   }
 
   App.coordination = { inGreen, greenCenter, deriveVp, teilpunktabstand, lageLabel, circularRuns, computeProposedBand };

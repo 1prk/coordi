@@ -12,8 +12,6 @@
     dirSelect: document.getElementById('dirSelect'),
     cyclesInput: document.getElementById('cyclesInput'),
     bandSelect: document.getElementById('bandSelect'),
-    vpFwdInput: document.getElementById('vpFwdInput'),
-    vpRevInput: document.getElementById('vpRevInput'),
     errorBox: document.getElementById('errorBox'),
     nodeList: document.getElementById('nodeList'),
     hintBox: document.getElementById('hintBox'),
@@ -95,6 +93,10 @@
       const isLast = i === nodes.length - 1;
       const distHin = hinDisabled ? 0 : n.distanceHin;
       const distRev = isLast ? 0 : n.distanceRev;
+      const vpHinField = hinDisabled ? '' : `<div class="node-field hin">
+            <label>V_p Hin [km/h]</label>
+            <input type="number" class="node-dist-input node-vp-hin" min="1" step="1" value="${n.vpHin || 50}">
+          </div>`;
       const revOffsetField = isLast
         ? `<div class="node-field rev">
             <label>Versatz Rück [m]</label>
@@ -103,6 +105,10 @@
         : `<div class="node-field rev">
             <label>Abstand Rück [m]</label>
             <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}">
+          </div>
+          <div class="node-field rev">
+            <label>V_p Rück [km/h]</label>
+            <input type="number" class="node-dist-input node-vp-rev" min="1" step="1" value="${n.vpRev || 50}">
           </div>`;
       return `<div class="node-card" data-id="${n.id}">
         <div class="node-order">
@@ -122,6 +128,7 @@
             <label>Abstand Hin [m]</label>
             <input type="number" class="node-dist-input node-dist-hin" min="0" step="10" value="${distHin}" ${hinDisabled ? 'disabled' : ''}>
           </div>
+          ${vpHinField}
           <div class="node-field rev">
             <label>Hauptsignal Rück</label>
             <select class="node-sig-select node-sig-rev">${sigOptions(n, n.mainColRev)}</select>
@@ -140,6 +147,10 @@
       card.querySelector('.node-dist-hin').addEventListener('change', (e) => { node.distanceHin = Number(e.target.value) || 0; recompute(); });
       const distRevInput = card.querySelector('.node-dist-rev');
       if (distRevInput) distRevInput.addEventListener('change', (e) => { node.distanceRev = Number(e.target.value) || 0; recompute(); });
+      const vpHinInput = card.querySelector('.node-vp-hin');
+      if (vpHinInput) vpHinInput.addEventListener('change', (e) => { node.vpHin = Number(e.target.value) || 0; recompute(); });
+      const vpRevInput = card.querySelector('.node-vp-rev');
+      if (vpRevInput) vpRevInput.addEventListener('change', (e) => { node.vpRev = Number(e.target.value) || 0; recompute(); });
       const revOffsetInput = card.querySelector('.node-rev-offset');
       if (revOffsetInput) revOffsetInput.addEventListener('change', (e) => { node.revOffset = Number(e.target.value) || 0; recompute(); });
       card.querySelector('.node-remove').addEventListener('click', () => { state.removeIntersection(id); renderNodeList(); recompute(); });
@@ -215,8 +226,21 @@
     return { rows, TU: TUref, tus };
   }
 
+  // V_p [km/h] je Abschnitt, in Fahrtrichtung: für orderedRows[i]->orderedRows[i+1]
+  // steht der Wert auf dem Knoten, der in dieser Richtung ERREICHT wird -
+  // dieselbe Karte, die auch den Abstand für dieses Segment trägt (vpHin auf
+  // der ankommenden Karte in Hin-Richtung, vpRev auf der ankommenden Karte
+  // in Rück-Richtung - siehe collectRows).
+  function segmentVpArray(orderedRows, dirTag) {
+    const field = dirTag === 'fwd' ? 'vpHin' : 'vpRev';
+    return orderedRows.slice(1).map(r => {
+      const node = state.intersections.find(n => n.id === r.nodeId);
+      return node ? Number(node[field]) || 0 : 0;
+    });
+  }
+
   // Reine Berechnung (keine DOM-Zugriffe) für eine Richtung.
-  function computeDirection(dirKey, dirTag, vpInput, enabled) {
+  function computeDirection(dirKey, dirTag, enabled) {
     if (!enabled) return { ok: false };
     const { rows, TU, tus } = collectRows(dirKey);
     if (!TU || rows.length < 2) return { ok: false, reason: rows.length < 2 ? 'nodes' : 'tu' };
@@ -231,12 +255,13 @@
     const bottleneck = entryRows.length ? entryRows.reduce((a, b) => b.tf < a.tf ? b : a, entryRows[0]) : null;
     const spd = der.segs.map(s => s.vp_kmh).filter(v => v > 0);
     const spdSpread = spd.length > 1 ? (Math.max(...spd) - Math.min(...spd)) : 0;
-    const vp = Number(vpInput.value) || 0;
-    const proposedBand = vp > 0 ? computeProposedBand(rows, vp, TU, dirTag) : null;
+
     const orderedRows = dirTag === 'fwd' ? rows : rows.slice().reverse();
+    const vpArray = segmentVpArray(orderedRows, dirTag);
+    const proposedBand = computeProposedBand(rows, vpArray, TU, dirTag);
     const ref = dirTag === 'fwd' ? rows[0] : rows[rows.length - 1];
 
-    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vp, proposedBand, ref };
+    return { ok: true, dirKey, dirTag, rows, orderedRows, TU, tus, corridor, sMin, sMax, der, lTP, bw, bottleneck, spd, spdSpread, vpArray, proposedBand, ref };
   }
 
   function recompute() {
@@ -245,8 +270,8 @@
     const dirMode = els.dirSelect.value;
     const hinEnabled = dirMode !== 'rev';
     const revEnabled = dirMode !== 'fwd';
-    const resHin = computeDirection('Hin', 'fwd', els.vpFwdInput, hinEnabled);
-    const resRev = computeDirection('Rev', 'rev', els.vpRevInput, revEnabled);
+    const resHin = computeDirection('Hin', 'fwd', hinEnabled);
+    const resRev = computeDirection('Rev', 'rev', revEnabled);
 
     if (!resHin.ok && !resRev.ok) {
       hidePanels();
@@ -263,6 +288,9 @@
       }
       if (res.spdSpread > 15) {
         msgs.push(`${label}: Progressionsgeschwindigkeit schwankt abschnittsweise deutlich (${Math.min(...res.spd).toFixed(0)}–${Math.max(...res.spd).toFixed(0)} km/h).`);
+      }
+      if (!res.proposedBand) {
+        msgs.push(`${label}: V_p (Vorschlag) fehlt oder ist 0 auf mindestens einem Abschnitt – kein Grünband berechenbar.`);
       }
     });
     showHint(msgs.join(' '), msgs.length > 0);
@@ -281,10 +309,14 @@
       kpis.push({ label: `V_p ${tag} (gemessen)`, value: res.der.vp_kmh.toFixed(1) + ' km/h', cls: 'accent' });
       if (res.bottleneck) kpis.push({ label: `Engste Stelle ${tag}`, value: res.bw.toFixed(0) + ' s', sub: res.bottleneck.name });
       if (res.proposedBand) {
+        const vps = res.vpArray.filter(v => v > 0);
+        const vpSub = vps.length
+          ? (vps.every(v => v === vps[0]) ? `bei ${vps[0]} km/h` : `bei ${Math.min(...vps)}–${Math.max(...vps)} km/h je Abschnitt`)
+          : '';
         kpis.push({
           label: `Bandbreite ${tag} (Vorschlag)`,
           value: res.proposedBand.bandwidth.toFixed(1) + ' s',
-          sub: res.proposedBand.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : `bei ${res.vp} km/h`
+          sub: res.proposedBand.bandwidth <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit' : vpSub
         });
       }
     });
@@ -297,10 +329,10 @@
 
     /* ---- Diagramm ---- */
     const Ncyc = clamp(parseInt(els.cyclesInput.value, 10) || 6, 1, 16);
-    const drawBand = els.bandSelect.value === 'measured';
+    const drawBand = els.bandSelect.value === 'on';
     const TU = resHin.ok ? resHin.TU : resRev.TU;
     const toDirGeom = (res, tag, tagColor, gridColor, bandFill, bandStroke) => res.ok ? {
-      rows: res.rows, orderedRows: res.orderedRows, measuredSegs: res.der.segs, lTP: res.lTP,
+      rows: res.rows, lTP: res.lTP,
       proposedBand: res.proposedBand, bandFill, bandStroke, tag, tagColor, gridColor
     } : null;
     renderDiagram(els.diagram, {
@@ -333,7 +365,7 @@
     }).join('');
   }
 
-  [els.dirSelect, els.cyclesInput, els.bandSelect, els.vpFwdInput, els.vpRevInput].forEach(el => el.addEventListener('change', recompute));
+  [els.dirSelect, els.cyclesInput, els.bandSelect].forEach(el => el.addEventListener('change', recompute));
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {

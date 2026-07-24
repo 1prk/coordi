@@ -5,8 +5,8 @@
   'use strict';
   const { esc } = App.utils;
 
-  // dir: {rows, orderedRows, measuredSegs, lTP, proposedBand, bandFill,
-  //       bandStroke, tag: 'H'|'R', tagColor, gridColor} oder null
+  // dir: {rows, lTP, proposedBand, bandFill, bandStroke, tag: 'H'|'R',
+  //       tagColor, gridColor} oder null
   function renderDiagram(container, o) {
     const { TU, Ncyc, drawBand, hin, rev } = o;
     const dirs = [hin, rev].filter(Boolean);
@@ -61,31 +61,13 @@
       }
     });
 
+    // Grünband bei der je Abschnitt vorgegebenen Progressionsgeschwindigkeit:
+    // Breite startet bei der Grünzeit des Bezugsknotens und wird an jedem
+    // weiteren Knoten auf dessen Grünzeit beschnitten (nie wieder
+    // verbreitert) - zeigt als Overlay, ob/wo die gewählte Geschwindigkeit
+    // eine durchgehende Welle ergibt.
     dirs.forEach(d => {
-      if (!drawBand || !d.orderedRows || d.orderedRows.length < 2) return;
-      let bandSvg = '';
-      for (let k = -1; k <= Ncyc; k++) {
-        for (let i = 0; i < d.orderedRows.length - 1; i++) {
-          const a = d.orderedRows[i], b = d.orderedRows[i + 1];
-          const dt = d.measuredSegs[i] ? d.measuredSegs[i].dt : 0;
-          const xA = X(a.station), xB = X(b.station);
-          const yFrontA = Y(a.an + k * TU), yFrontB = Y(a.an + dt + k * TU);
-          const yBackA = Y(a.an + a.tf + k * TU), yBackB = Y(a.an + dt + a.tf + k * TU);
-          const pts = [[xA, yFrontA], [xB, yFrontB], [xB, yBackB], [xA, yBackA]]
-            .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-          bandSvg += `<polygon points="${pts}" fill="rgba(46,125,70,0.20)" stroke="rgba(46,125,70,0.55)" stroke-width="1"><title>${esc(a.name)} -> ${esc(b.name)}: ${a.tf}s</title></polygon>`;
-          const yMidA = Y(a.an + a.tf / 2 + k * TU), yMidB = Y(a.an + dt + a.tf / 2 + k * TU);
-          bandSvg += `<line x1="${xA.toFixed(1)}" y1="${yMidA.toFixed(1)}" x2="${xB.toFixed(1)}" y2="${yMidB.toFixed(1)}" stroke="var(--accent)" stroke-width="1.4"/>`;
-        }
-      }
-      svg += `<g clip-path="${clip}">${bandSvg}</g>`;
-    });
-
-    // Bänder bei vorgegebener (fester) Progressionsgeschwindigkeit: je
-    // Abschnitt der kumulierte Gültigkeitsbereich - zeigt an jedem Knoten
-    // sichtbar, ob und wie stark die Grünzeit das Band dort beschneidet.
-    dirs.forEach(d => {
-      if (!d.proposedBand) return;
+      if (!drawBand || !d.proposedBand) return;
       let propSvg = '';
       for (let k = -1; k <= Ncyc; k++) {
         d.proposedBand.segments.forEach(seg => {
@@ -95,7 +77,7 @@
             const yB0 = Y(run.t0a + seg.tauB + k * TU), yB1 = Y(run.t0b + seg.tauB + k * TU);
             const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
               .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-            propSvg += `<polygon points="${pts}" fill="${d.bandFill}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${d.proposedBand.Vp_kmh} km/h</title></polygon>`;
+            propSvg += `<polygon points="${pts}" fill="${d.bandFill}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${run.width.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h</title></polygon>`;
           });
         });
       }
