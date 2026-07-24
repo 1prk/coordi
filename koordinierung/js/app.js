@@ -375,14 +375,14 @@
     const showOptimum = els.bandOptimumInput.checked;
     const showTimestamp = els.showTimestampInput.checked;
     const TU = resHin.ok ? resHin.TU : resRev.TU;
-    const toDirGeom = (res, tag, tagColor, gridColor, bandFill, bandStroke) => res.ok ? {
+    const toDirGeom = (res, tag, tagColor, gridColor) => res.ok ? {
       rows: res.rows, lTP: res.lTP,
       qualitativeBand: res.qualitativeBand, optimumBand: res.optimumBand,
-      bandFill, bandStroke, tag, tagColor, gridColor,
+      tag, tagColor, gridColor,
       tRangeMin: res.tRangeMin, tRangeMax: res.tRangeMax
     } : null;
-    const hinGeom = toDirGeom(resHin, 'H', '#8a5a00', 'rgba(211,161,37,0.6)', 'rgba(211,161,37,0.35)', 'rgba(138,90,0,0.7)');
-    const revGeom = toDirGeom(resRev, 'R', '#2b6ca3', 'rgba(43,108,163,0.6)', 'rgba(43,108,163,0.30)', 'rgba(43,108,163,0.75)');
+    const hinGeom = toDirGeom(resHin, 'H', '#8a5a00', 'rgba(211,161,37,0.6)');
+    const revGeom = toDirGeom(resRev, 'R', '#2b6ca3', 'rgba(43,108,163,0.6)');
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));

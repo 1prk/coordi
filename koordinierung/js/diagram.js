@@ -57,19 +57,36 @@
     const clipId = 'coordClip' + Math.random().toString(36).slice(2, 8);
     const clip = `url(#${clipId})`;
 
-    // Grünband-Füllung: grüne Schraffur statt Volltonfarbe - deutlich von der
-    // massiven Grünphasen-Markierung (var(--sig-green)) unterscheidbar,
-    // während die Bandrichtung (H/R) weiterhin über die Randfarbe erkennbar
-    // bleibt (siehe bandStroke je Richtung).
-    const hatchId = 'bandHatch' + Math.random().toString(36).slice(2, 8);
-    const hatchFillUrl = `url(#${hatchId})`;
+    // Grünband-Füllung: je Richtung (H/R) UND Bandart (Querschnitt/Optimum)
+    // eine eigene Schraffur - unterscheidbare Farbe (H dunkelgrün/neongrün,
+    // R dunkelblau/neonblau) UND unterschiedliche Schraffurrichtung
+    // (Querschnitt und Optimum laufen je Richtung entgegengesetzt schräg),
+    // damit sich alle vier Bänder auch ohne Legende auf einen Blick
+    // unterscheiden lassen. Durchgehende (nicht gestrichelte) Randlinie in
+    // derselben Farbe wie die Schraffur.
+    function makeHatchPattern(color, angleDeg, idSeed) {
+      const id = 'hatch' + idSeed + Math.random().toString(36).slice(2, 8);
+      const def = `<pattern id="${id}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(${angleDeg})">`
+        + `<rect width="6" height="6" fill="${color}" fill-opacity="0.20"/>`
+        + `<line x1="0" y1="0" x2="0" y2="6" stroke="${color}" stroke-width="2"/>`
+        + `</pattern>`;
+      return { def, url: `url(#${id})`, color };
+    }
+    const bandStyle = {
+      H: {
+        qual: makeHatchPattern('#1b5e20', 45, 'Hq'),   // Hin Querschnitt: dunkelgrün, Schraffur nach rechts
+        opt: makeHatchPattern('#39ff14', -45, 'Ho')    // Hin Optimum: neongrün, Schraffur nach links
+      },
+      R: {
+        qual: makeHatchPattern('#0b3d91', -45, 'Rq'),  // Rück Querschnitt: dunkelblau, Schraffur nach links
+        opt: makeHatchPattern('#00e5ff', 45, 'Ro')     // Rück Optimum: neonblau, Schraffur nach rechts
+      }
+    };
 
     let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, ui-monospace, monospace">`;
     svg += `<defs><clipPath id="${clipId}"><rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}"/></clipPath>`;
-    svg += `<pattern id="${hatchId}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`
-      + `<rect width="6" height="6" fill="rgba(120,190,110,0.22)"/>`
-      + `<line x1="0" y1="0" x2="0" y2="6" stroke="#3f8a4c" stroke-width="2"/>`
-      + `</pattern></defs>`;
+    svg += bandStyle.H.qual.def + bandStyle.H.opt.def + bandStyle.R.qual.def + bandStyle.R.opt.def;
+    svg += `</defs>`;
     svg += `<rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}" fill="#fff" stroke="var(--border-strong)"/>`;
 
     // Gitterlinien nach TX (Sekunde im Umlauf, 0..TU) statt Uhrzeit/verstri-
@@ -79,8 +96,13 @@
     // werden (Checkbox "Zeitstempel anzeigen").
     const gridStepS = TU ? pickTxGridStep(TU, pxPerSec, showTimestamp ? 54 : 30) : 60;
     const gridStepMs = gridStepS * 1000;
+    const cycleMs = TU ? TU * 1000 : 0;
     const firstGrid = Math.ceil(globalTMin / gridStepMs) * gridStepMs;
     for (let t = firstGrid; t <= globalTMax; t += gridStepMs) {
+      // Umlaufgrenze (Vielfaches von TU) wird unten als eigene, hervorgeho-
+      // bene Linie mit Label "TX {TU}" (Umlaufende) gezeichnet statt hier
+      // als normale Gitterlinie mit Label "TX 0" - Doppelung vermeiden.
+      if (cycleMs && Math.abs(t % cycleMs) < 1) continue;
       const y = Y(t);
       const tx = TU ? Math.round((((t - globalTMin) / 1000) % TU + TU) % TU) : null;
       svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
@@ -89,6 +111,25 @@
         svg += `<text x="${mL - 6}" y="${(y + 8).toFixed(1)}" text-anchor="end" font-size="7.5" fill="var(--text-faint)">${fmtTimeShort(t)}</text>`;
       } else {
         svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-faint)">TX ${tx}</text>`;
+      }
+    }
+
+    // Umlaufende-Linien: an jedem Vielfachen von TU - NICHT als TX 0 (Beginn
+    // des nächsten Umlaufs), sondern als TX {TU} (Ende des laufenden
+    // Umlaufs) beschriftet - deutlich abgesetzt (durchgezogen, kräftiger)
+    // vom übrigen gestrichelten Raster, damit Umlaufgrenzen beim Scrollen
+    // durch die Historie klar erkennbar bleiben.
+    if (cycleMs) {
+      const firstCycleEnd = Math.ceil(globalTMin / cycleMs) * cycleMs;
+      for (let t = firstCycleEnd; t <= globalTMax; t += cycleMs) {
+        const y = Y(t);
+        svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border-strong)" stroke-width="1.4"/>`;
+        if (showTimestamp) {
+          svg += `<text x="${mL - 6}" y="${(y - 1).toFixed(1)}" text-anchor="end" font-size="9" font-weight="700" fill="var(--text-muted)">TX ${TU}</text>`;
+          svg += `<text x="${mL - 6}" y="${(y + 8).toFixed(1)}" text-anchor="end" font-size="7.5" fill="var(--text-muted)">${fmtTimeShort(t)}</text>`;
+        } else {
+          svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" font-weight="700" fill="var(--text-muted)">TX ${TU}</text>`;
+        }
       }
     }
     const axisTitle = showTimestamp
@@ -112,11 +153,10 @@
     // Band jede einzelne (reale) Grünzeit im Streckenzug überhaupt berührt.
     // Gezeichnet direkt aus den realen Vorkommen (occurrences) des
     // abfahrenden Knotens - kein periodisch wiederholter Medianwert, daher
-    // keine künstliche Drift gegenüber der Realität. Grün schraffiert,
-    // gestrichelter Rand, um es von der massiven Grünphase UND vom
-    // Optimum-Band zu unterscheiden.
+    // keine künstliche Drift gegenüber der Realität.
     dirs.forEach(d => {
       if (!showQualitative || !d.qualitativeBand) return;
+      const style = bandStyle[d.tag].qual;
       let qSvg = '';
       d.qualitativeBand.segments.forEach(seg => {
         const xA = X(seg.a.station), xB = X(seg.b.station);
@@ -126,7 +166,7 @@
           if (Math.max(yFrontA, yFrontB, yBackA, yBackB) < mT || Math.min(yFrontA, yFrontB, yBackA, yBackB) > mT + plotH) return;
           const pts = [[xA, yFrontA], [xB, yFrontB], [xB, yBackB], [xA, yBackA]]
             .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-          qSvg += `<polygon points="${pts}" fill="${hatchFillUrl}" stroke="${d.bandStroke}" stroke-width="1.2" stroke-dasharray="3 2"><title>${esc(seg.a.name)}: An ${occ.an}-Ab ${occ.ab} bei ${seg.vp_kmh.toFixed(0)} km/h (Querschnitt, ohne Verengung)</title></polygon>`;
+          qSvg += `<polygon points="${pts}" fill="${style.url}" stroke="${style.color}" stroke-width="1.2"><title>${esc(seg.a.name)}: An ${occ.an}-Ab ${occ.ab} bei ${seg.vp_kmh.toFixed(0)} km/h (Querschnitt, ohne Verengung)</title></polygon>`;
         });
       });
       svg += `<g clip-path="${clip}">${qSvg}</g>`;
@@ -143,6 +183,7 @@
     // tatsächliche Grünzeit sichtbar über- oder unterschreiten.
     dirs.forEach(d => {
       if (!showOptimum || !d.optimumBand) return;
+      const style = bandStyle[d.tag].opt;
       let propSvg = '';
       d.optimumBand.segments.forEach(seg => {
         const xA = X(seg.a.station), xB = X(seg.b.station);
@@ -153,7 +194,7 @@
           const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
             .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
           const widthS = (run.frontEnd - run.frontStart) / 1000;
-          propSvg += `<polygon points="${pts}" fill="${hatchFillUrl}" stroke="${d.bandStroke}" stroke-width="1"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${widthS.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
+          propSvg += `<polygon points="${pts}" fill="${style.url}" stroke="${style.color}" stroke-width="1.2"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${widthS.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
         });
       });
       svg += `<g clip-path="${clip}">${propSvg}</g>`;
