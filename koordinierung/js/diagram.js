@@ -33,16 +33,19 @@
     svg += `<defs><clipPath id="${clipId}"><rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}"/></clipPath></defs>`;
     svg += `<rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}" fill="#fff" stroke="var(--border-strong)"/>`;
 
-    const half = Math.round(TU / 2);
     for (let k = 0; k <= Ncyc; k++) {
       const yB = Y(k * TU);
       svg += `<line x1="${mL}" y1="${yB.toFixed(1)}" x2="${mL + plotW}" y2="${yB.toFixed(1)}" stroke="var(--border-strong)"/>`;
       svg += `<text x="${mL - 6}" y="${(yB + 3).toFixed(1)}" text-anchor="end" font-size="9" font-weight="700" fill="var(--text-muted)">0</text>`;
     }
+    // Gestrichelte Hilfslinien alle 10s innerhalb jedes Umlaufs.
     for (let k = 0; k < Ncyc; k++) {
-      const yMid = Y(k * TU + TU / 2), yBottom = Y(k * TU);
-      svg += `<line x1="${mL}" y1="${yMid.toFixed(1)}" x2="${mL + plotW}" y2="${yMid.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
-      svg += `<text x="${mL - 6}" y="${(yMid + 3).toFixed(1)}" text-anchor="end" font-size="8" fill="var(--text-faint)">${half}</text>`;
+      const yBottom = Y(k * TU);
+      for (let t = 10; t < TU; t += 10) {
+        const y = Y(k * TU + t);
+        svg += `<line x1="${mL}" y1="${y.toFixed(1)}" x2="${mL + plotW}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-dasharray="2 4"/>`;
+        svg += `<text x="${mL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="8" fill="var(--text-faint)">${t}</text>`;
+      }
       svg += `<text x="${(mL + 4).toFixed(1)}" y="${(yBottom - 4).toFixed(1)}" font-size="8" fill="var(--text-faint)">Umlauf ${k + 1}</text>`;
     }
     svg += `<text x="12" y="${mT + plotH / 2}" font-size="10" fill="var(--text-muted)" transform="rotate(-90 12 ${mT + plotH / 2})" text-anchor="middle">Zeit t [s] je Umlauf (0…${TU})</text>`;
@@ -125,8 +128,49 @@
 
     svg += `<text x="${mL + plotW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Weg s [m]</text>`;
     svg += `</svg>`;
-    container.innerHTML = svg;
+
+    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung - bleibt
+    // beim vertikalen Scrollen im Diagramm sichtbar, scrollt aber mit dem
+    // Diagramm horizontal mit (bleibt so über der jeweiligen Knotenlinie).
+    const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
+    let header = `<div class="diagram-sticky-header" style="width:${W}px;height:${headerH}px;">`;
+    dirs.forEach((d, di) => {
+      d.rows.forEach(r => {
+        const x = X(r.station);
+        header += `<span class="diagram-sg-label" style="left:${x.toFixed(1)}px;top:${2 + di * 15}px;color:${d.tagColor}">${d.tag} ${esc(r.sgName)}</span>`;
+      });
+    });
+    header += `</div>`;
+
+    container.innerHTML = header + svg + `<div class="diagram-tooltip"></div>`;
     container.scrollTop = container.scrollHeight;
+
+    // Snappy Tooltip: zeigt beim Bewegen der Maus die volle Sekunde (inkl.
+    // Umlauf) und den vollen Meter an der Cursorposition an.
+    const svgEl = container.querySelector('svg');
+    const tooltipEl = container.querySelector('.diagram-tooltip');
+    if (svgEl && tooltipEl) {
+      svgEl.addEventListener('mousemove', (e) => {
+        const rect = svgEl.getBoundingClientRect();
+        const scaleX = W / (rect.width || W), scaleY = H / (rect.height || H);
+        const localX = (e.clientX - rect.left) * scaleX;
+        const localY = (e.clientY - rect.top) * scaleY;
+        if (localX < mL || localX > mL + plotW || localY < mT || localY > mT + plotH) {
+          tooltipEl.style.display = 'none';
+          return;
+        }
+        const tAbs = Math.round((mT + plotH - localY) / pxPerSec);
+        const cyc = Math.floor(tAbs / TU) + 1;
+        const tInCyc = ((tAbs % TU) + TU) % TU;
+        const sVal = Math.round(sMin + (localX - mL) / (sx || 1e-6));
+        tooltipEl.textContent = `t = ${tInCyc}s · Umlauf ${cyc} · s = ${sVal} m`;
+        const hostRect = container.getBoundingClientRect();
+        tooltipEl.style.left = (e.clientX - hostRect.left + container.scrollLeft + 14) + 'px';
+        tooltipEl.style.top = (e.clientY - hostRect.top + container.scrollTop - 26) + 'px';
+        tooltipEl.style.display = 'block';
+      });
+      svgEl.addEventListener('mouseleave', () => { tooltipEl.style.display = 'none'; });
+    }
   }
 
   App.diagram = { renderDiagram };

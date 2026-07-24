@@ -111,8 +111,22 @@ input[type=file]{display:none;}
 .kpi.accent .k-value{color:var(--accent);}
 
 /* Diagramm */
-.diagram-wrap{padding:8px 12px 14px; overflow:auto; max-height:600px; position:relative;}
-.diagram-wrap svg{display:block;}
+.diagram-wrap{padding:0 12px 14px; overflow:auto; max-height:600px; position:relative;}
+.diagram-wrap svg{display:block; margin-top:8px;}
+.diagram-sticky-header{
+  position:sticky; top:0; left:0; z-index:4;
+  background:var(--bg-panel); border-bottom:1px solid var(--border);
+  box-shadow:0 1px 0 var(--border);
+}
+.diagram-sg-label{
+  position:absolute; transform:translateX(-50%); white-space:nowrap;
+  font-family:var(--mono); font-size:10px; font-weight:700;
+}
+.diagram-tooltip{
+  position:absolute; display:none; pointer-events:none; z-index:8;
+  background:var(--text); color:#fff; font-family:var(--mono); font-size:10.5px;
+  padding:3px 7px; border-radius:2px; white-space:nowrap; box-shadow:0 2px 6px rgba(0,0,0,.3);
+}
 .legend{display:flex; gap:14px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--border); background:var(--bg-panel-alt);}
 .legend .item{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted);}
 .swatch{width:11px; height:11px; border:1px solid rgba(0,0,0,.25); display:inline-block;}
