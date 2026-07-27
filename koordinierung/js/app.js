@@ -26,6 +26,9 @@
   const els = {
     btnAddFile: document.getElementById('btnAddFile'),
     fileInput: document.getElementById('fileInput'),
+    btnExport: document.getElementById('btnExport'),
+    btnImport: document.getElementById('btnImport'),
+    importInput: document.getElementById('importInput'),
     dirSelect: document.getElementById('dirSelect'),
     bandQualitativeInput: document.getElementById('bandQualitativeInput'),
     bandOptimumInput: document.getElementById('bandOptimumInput'),
@@ -92,6 +95,99 @@
     }
     renderNodeList();
     recompute();
+  });
+
+  /* ---------------- Konfiguration exportieren/importieren ---------------- */
+  // Rein clientseitig (Blob-Download / FileReader) - läuft ohne Server auch
+  // unter file://, kein CORS-Risiko, da keine Netzwerkanfrage involviert
+  // ist. Der Export bettet den ROHTEXT jeder Knoten-CSV mit ein (nicht nur
+  // Dateiname/Einstellungen), damit sich eine gespeicherte Konfiguration
+  // ohne erneutes Wiederfinden/Hochladen der Original-Dateien vollständig
+  // wiederherstellen lässt.
+  function exportConfig() {
+    const data = {
+      formatVersion: 1,
+      exportedAt: new Date().toISOString(),
+      settings: {
+        baseStation: Number(els.baseStationInput.value) || 0,
+        dirMode: els.dirSelect.value,
+        showQualitative: els.bandQualitativeInput.checked,
+        showOptimum: els.bandOptimumInput.checked,
+        showTimestamp: els.showTimestampInput.checked
+      },
+      nodes: state.intersections.map(n => ({
+        fileName: n.fileName,
+        rawText: n.rawText,
+        mainColHin: n.mainColHin,
+        mainColRev: n.mainColRev,
+        distanceHin: n.distanceHin,
+        distanceRev: n.distanceRev,
+        revOffset: n.revOffset,
+        vpHin: n.vpHin,
+        vpRev: n.vpRev
+      }))
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `koordinierung-config-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importConfig(file) {
+    let data;
+    try {
+      const text = await file.text();
+      data = JSON.parse(text);
+    } catch (e) {
+      showError(`Import fehlgeschlagen: ${e.message}`);
+      return;
+    }
+    if (!data || !Array.isArray(data.nodes)) {
+      showError('Import fehlgeschlagen: Datei enthält keine gültige Koordinierung-Konfiguration.');
+      return;
+    }
+    state.clearIntersections();
+    data.nodes.forEach(nodeData => {
+      let entry;
+      try {
+        entry = state.buildIntersection(nodeData.fileName || 'import.csv', nodeData.rawText || '');
+      } catch (e) {
+        showError(`${nodeData.fileName || 'Knoten'}: ${e.message}`);
+        return;
+      }
+      if (nodeData.mainColHin != null) entry.mainColHin = nodeData.mainColHin;
+      if (nodeData.mainColRev != null) entry.mainColRev = nodeData.mainColRev;
+      entry.distanceHin = Number(nodeData.distanceHin) || 0;
+      entry.distanceRev = Number(nodeData.distanceRev) || 0;
+      entry.revOffset = Number(nodeData.revOffset) || 0;
+      entry.vpHin = Number(nodeData.vpHin) || 50;
+      entry.vpRev = Number(nodeData.vpRev) || 50;
+      state.addIntersection(entry);
+    });
+    if (data.settings) {
+      els.baseStationInput.value = data.settings.baseStation ?? 0;
+      els.dirSelect.value = data.settings.dirMode ?? 'both';
+      els.bandQualitativeInput.checked = !!data.settings.showQualitative;
+      els.bandOptimumInput.checked = !!data.settings.showOptimum;
+      els.showTimestampInput.checked = !!data.settings.showTimestamp;
+    }
+    clearError();
+    renderNodeList();
+    recompute();
+  }
+
+  els.btnExport.addEventListener('click', exportConfig);
+  els.btnImport.addEventListener('click', () => els.importInput.click());
+  els.importInput.addEventListener('change', async () => {
+    const file = els.importInput.files && els.importInput.files[0];
+    els.importInput.value = '';
+    if (file) await importConfig(file);
   });
 
   /* ---------------- Knotenliste ---------------- */

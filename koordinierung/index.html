@@ -17,6 +17,9 @@
     <div class="toolbar">
       <button class="add-btn" id="btnAddFile" title="Knoten (CSV) hinzufügen">+</button>
       <input type="file" id="fileInput" accept=".csv,.txt,.tsv" multiple>
+      <button class="btn" id="btnExport" title="Aktuelle Konfiguration (Knoten inkl. CSV-Daten + Einstellungen) als JSON-Datei speichern">Export</button>
+      <button class="btn" id="btnImport" title="Konfiguration aus einer zuvor exportierten JSON-Datei laden">Import</button>
+      <input type="file" id="importInput" accept=".json" style="display:none;">
       <span class="tb-field">Richtung
         <select id="dirSelect">
           <option value="both">Beide</option>

@@ -28,6 +28,11 @@
     return {
       id: uid(),
       fileName,
+      // Rohtext der Original-CSV - für den Konfigurations-Export
+      // (JSON-Sicherung/Wiederherstellung, siehe app.js) mitgeführt, damit
+      // sich ein Knoten beim Import ohne erneutes Hochladen der Datei
+      // vollständig neu aufbauen lässt.
+      rawText: text,
       knotenName: parsed.knotenName,
       knotenNr: parsed.knotenNr,
       columns: parsed.columns,
@@ -65,6 +70,10 @@
     if (i < 0 || j < 0 || j >= intersections.length) return;
     [intersections[i], intersections[j]] = [intersections[j], intersections[i]];
   }
+  function clearIntersections() { intersections.length = 0; }
 
-  App.state = { intersections, buildIntersection, addIntersection, removeIntersection, moveIntersection };
+  App.state = {
+    intersections, buildIntersection, addIntersection, removeIntersection, moveIntersection,
+    clearIntersections
+  };
 })(window.App = window.App || {});
