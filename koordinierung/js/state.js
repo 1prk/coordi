@@ -6,6 +6,16 @@
 
   const intersections = [];
 
+  // Rohwert einer DET-Spalte (Kategorie DETEKTOR, OCIT-Typname single_loop):
+  // 0 = frei, 1 = belegt, sonst Belegungsgrad in % (Stufen 1-24...) - für die
+  // Diagramm-Überlagerung reicht die binäre Unterscheidung frei/belegt, ob
+  // die Anlage nur 0/1 oder einen abgestuften Belegungsgrad liefert.
+  function categorizeDetRaw(raw) {
+    if (!raw || raw.toUpperCase() === 'INV') return 'UNBEKANNT';
+    const num = Number(raw);
+    return Number.isFinite(num) ? (num > 0 ? 'BELEGT' : 'FREI') : 'UNBEKANNT';
+  }
+
   // Baut aus Rohtext (eine CSV-Datei = ein Knoten) einen Zustandseintrag.
   // Neben dem Gesamt-Mitschnitt-Plan (planByCol) bleiben times/splValues/
   // cycleStarts sowie die Segmente je Spalte (segsByCol) erhalten, damit sich
@@ -25,6 +35,16 @@
     });
     const splPeriods = computeSplPeriods(parsed.times, parsed.splValues);
     const defaultCol = parsed.columns.find(c => planByCol.get(c.index))?.index ?? null;
+
+    // Detektoren (DET): je Spalte die belegt/frei-Segmente vorab berechnen,
+    // damit sich einzelne Detektoren später im Diagramm ohne Neuberechnung
+    // ein-/ausblenden lassen (siehe app.js onDetToggle / diagram.js).
+    const detColumns = parsed.otherColumns.filter(c => c.kuerzel === 'DET');
+    const detSegsByCol = new Map();
+    detColumns.forEach(col => {
+      detSegsByCol.set(col.index, buildSegments(parsed.times, parsed.seriesByCol.get(col.index), categorizeDetRaw));
+    });
+
     return {
       id: uid(),
       fileName,
@@ -33,6 +53,11 @@
       columns: parsed.columns,
       planByCol,
       segsByCol,
+      detColumns,
+      detSegsByCol,
+      // Indizes der DET-Spalten, die im Diagramm an diesem Knoten überlagert
+      // werden sollen (vom Nutzer je Knoten ausgewählt, siehe Setup-Tab).
+      selectedDet: [],
       times: parsed.times,
       cycleStarts: parsed.cycleStarts,
       splPeriods,

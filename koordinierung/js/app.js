@@ -303,6 +303,16 @@
             <label>V_p Rück [km/h]</label>
             <input class="input node-vp-rev" type="number" min="1" step="1" value="${n.vpRev || 50}">
           </div>`;
+      const detField = (n.detColumns || []).length ? `<div class="node-det">
+          <div class="tag tag-neutral">Detektoren</div>
+          <div class="node-det-list">
+            ${n.detColumns.map(c => `<label class="radio">
+              <input type="checkbox" class="node-det-check" value="${c.index}" ${(n.selectedDet || []).includes(c.index) ? 'checked' : ''}>
+              <span class="dot" style="border-radius:2px;"></span>
+              ${esc(c.name)}
+            </label>`).join('')}
+          </div>
+        </div>` : '';
       return `<div class="node-card card elev-sm" data-id="${n.id}">
         <div class="node-card-head">
           <div class="node-order">
@@ -341,6 +351,7 @@
             </div>
           </div>
         </div>
+        ${detField}
       </div>`;
     }).join('');
 
@@ -358,6 +369,15 @@
       if (vpRevInput) vpRevInput.addEventListener('change', (e) => { node.vpRev = Number(e.target.value) || 0; recompute(); });
       const revOffsetInput = card.querySelector('.node-rev-offset');
       if (revOffsetInput) revOffsetInput.addEventListener('change', (e) => { node.revOffset = Number(e.target.value) || 0; recompute(); });
+      card.querySelectorAll('.node-det-check').forEach(chk => {
+        chk.addEventListener('change', (e) => {
+          const idx = Number(e.target.value);
+          node.selectedDet = e.target.checked
+            ? [...(node.selectedDet || []), idx]
+            : (node.selectedDet || []).filter(v => v !== idx);
+          recompute();
+        });
+      });
       card.querySelector('.node-remove').addEventListener('click', () => { state.removeIntersection(id); renderNodeList(); recompute(); });
       const upBtn = card.querySelector('.node-up');
       const downBtn = card.querySelector('.node-down');
@@ -420,7 +440,15 @@
         // über die gesamte Aufzeichnung statt eines wiederholten Medians).
         greenSegs: (n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN'),
         tMin: n.times[0], tMax: n.times[n.times.length - 1],
-        cycleStarts: n.cycleStarts, splPeriods: n.splPeriods
+        cycleStarts: n.cycleStarts, splPeriods: n.splPeriods,
+        // Vom Nutzer ausgewählte Detektoren dieses Knotens (siehe
+        // renderNodeList) - roh als belegt-Segmente fürs Diagramm, unabhängig
+        // von Richtung/Hauptsignal, da ein Detektor eine physische
+        // Einrichtung am Knoten ist, keine SG-spezifische Größe.
+        detSegs: (n.selectedDet || []).map(idx => {
+          const info = (n.detColumns || []).find(c => c.index === idx);
+          return { name: info ? info.name : '', segs: (n.detSegsByCol.get(idx) || []).filter(s => s.cat === 'BELEGT') };
+        })
       });
     };
 

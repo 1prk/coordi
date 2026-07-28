@@ -256,6 +256,20 @@
             overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ys - 2).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${ab}</text>`;
           }
         });
+        // Ausgewählte Detektoren (siehe Setup-Tab, Knotenkarte): je Detektor
+        // eine eigene schmale Spur rechts neben der Knotenlinie (jenseits der
+        // An/Ab-Beschriftung bei x+6), mit den realen belegt-Intervallen -
+        // erlaubt den Vergleich "Anforderung/Belegung kurz vor/während der
+        // Freigabe" direkt gegen die Grünzeit an diesem Knoten.
+        (r.detSegs || []).forEach((det, di) => {
+          const xd = x + 18 + di * 7;
+          det.segs.forEach(seg => {
+            const ys = Y(seg.end), ye = Y(seg.start);
+            if (ye < mT || ys > mT + plotH) return;
+            const h = Math.max(1, ye - ys);
+            overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="#6a3fa0"><title>${esc(det.name)} (${d.tag} ${esc(r.name)}): belegt ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
+          });
+        });
         svg += `<g clip-path="${clip}">${overlay}</g>`;
       });
     });
