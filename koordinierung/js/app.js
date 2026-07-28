@@ -26,7 +26,16 @@
   // 'all' | 'ja' (nur durchgefahrene Umläufe) | 'nein' (nur gescheiterte).
   let umlaufFilter = 'all';
 
+  // Aktiver Tab: 'setup' | 'diagram' | 'stats'. Start bei 'setup', da die App
+  // (anders als die Referenz) ohne vorgeladene Beispieldaten startet - ein
+  // leerer Diagramm-Tab wäre der falsche erste Eindruck.
+  let currentTab = 'setup';
+
   const els = {
+    tabLinks: document.querySelectorAll('.nav-tab-link'),
+    tabSetup: document.getElementById('tabSetup'),
+    tabDiagram: document.getElementById('tabDiagram'),
+    tabStats: document.getElementById('tabStats'),
     btnAddFile: document.getElementById('btnAddFile'),
     fileInput: document.getElementById('fileInput'),
     btnExport: document.getElementById('btnExport'),
@@ -66,9 +75,8 @@
     els.errorBox.style.display = 'none';
     els.errorBox.textContent = '';
   }
-  function showHint(msg, warn) {
+  function showHint(msg) {
     els.hintBox.textContent = msg;
-    els.hintBox.className = 'hint-box' + (warn ? ' warn' : '');
     els.hintBox.style.display = msg ? 'block' : 'none';
   }
   function hidePanels() {
@@ -78,6 +86,18 @@
     els.statsPanel.style.display = 'none';
     els.umlaufPanel.style.display = 'none';
   }
+
+  /* ---------------- Tabs (Setup / Diagramm / Statistik) ---------------- */
+  const TAB_CONTENT = { setup: els.tabSetup, diagram: els.tabDiagram, stats: els.tabStats };
+  function setTab(tab) {
+    currentTab = tab;
+    Object.keys(TAB_CONTENT).forEach(t => { TAB_CONTENT[t].style.display = t === tab ? '' : 'none'; });
+    els.tabLinks.forEach(a => {
+      if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+  }
+  els.tabLinks.forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); setTab(a.dataset.tab); }));
 
   // Beim Import einer Konfigurations-JSON zwischengespeichert, bis die
   // dazugehörigen CSV-Dateien (erneut) ausgewählt wurden - siehe
@@ -218,7 +238,7 @@
       return;
     }
     pendingImport = data;
-    showHint(`Konfiguration geladen (${data.nodes.length} Knoten). Bitte jetzt dieselben CSV-Dateien erneut auswählen: ${data.nodes.map(n => n.fileName).join(', ')}`, false);
+    showHint(`Konfiguration geladen (${data.nodes.length} Knoten). Bitte jetzt dieselben CSV-Dateien erneut auswählen: ${data.nodes.map(n => n.fileName).join(', ')}`);
     els.fileInput.click();
   });
 
@@ -233,14 +253,14 @@
   function renderNodeList() {
     const nodes = state.intersections;
     if (nodes.length === 0) {
-      els.nodeList.innerHTML = '<div class="node-empty">Noch keine Knoten – über "+" eine OCIT-CSV je Knoten hinzufügen.</div>';
+      els.nodeList.innerHTML = '<div class="node-empty">Noch keine Knoten – über "+ Knoten hinzufügen" eine OCIT-CSV je Knoten hinzufügen.</div>';
       hidePanels();
       showHint('');
       return;
     }
     els.nodeList.innerHTML = nodes.map((n, i) => {
       const label = n.knotenName || n.fileName;
-      const sub = n.knotenNr ? `Nr. ${esc(n.knotenNr)}` : '';
+      const sub = n.knotenNr ? ` <span class="tag tag-neutral">Nr. ${esc(n.knotenNr)}</span>` : '';
       // "Abstand Hin" auf Karte i = Abstand zur vorherigen Karte (deaktiviert
       // an Karte 0, kein Vorgänger). "Abstand Rück" ist dasselbe gespiegelt:
       // die Rückrichtung durchläuft die Liste von hinten nach vorn, ihr
@@ -253,49 +273,61 @@
       const isLast = i === nodes.length - 1;
       const distHin = hinDisabled ? 0 : n.distanceHin;
       const distRev = isLast ? 0 : n.distanceRev;
-      const vpHinField = hinDisabled ? '' : `<div class="node-field hin">
+      const vpHinField = hinDisabled ? '' : `<div class="field">
             <label>V_p Hin [km/h]</label>
-            <input type="number" class="node-dist-input node-vp-hin" min="1" step="1" value="${n.vpHin || 50}">
+            <input class="input node-vp-hin" type="number" min="1" step="1" value="${n.vpHin || 50}">
           </div>`;
       const revOffsetField = isLast
-        ? `<div class="node-field rev">
+        ? `<div class="field">
             <label>Versatz Rück [m]</label>
-            <input type="number" class="node-dist-input node-rev-offset" step="1" value="${n.revOffset || 0}" title="Positionsunterschied der Rück- zur Hin-Signalgruppe an diesem (letzten) Knoten">
+            <input class="input node-rev-offset" type="number" step="1" value="${n.revOffset || 0}" title="Positionsunterschied der Rück- zur Hin-Signalgruppe an diesem (letzten) Knoten">
           </div>`
-        : `<div class="node-field rev">
+        : `<div class="field">
             <label>Abstand Rück [m]</label>
-            <input type="number" class="node-dist-input node-dist-rev" min="0" step="10" value="${distRev}">
+            <input class="input node-dist-rev" type="number" min="0" step="10" value="${distRev}">
           </div>
-          <div class="node-field rev">
+          <div class="field">
             <label>V_p Rück [km/h]</label>
-            <input type="number" class="node-dist-input node-vp-rev" min="1" step="1" value="${n.vpRev || 50}">
+            <input class="input node-vp-rev" type="number" min="1" step="1" value="${n.vpRev || 50}">
           </div>`;
-      return `<div class="node-card" data-id="${n.id}">
-        <div class="node-order">
-          <button type="button" class="icon-btn node-up" ${i === 0 ? 'disabled' : ''} title="nach oben">▲</button>
-          <button type="button" class="icon-btn node-down" ${i === nodes.length - 1 ? 'disabled' : ''} title="nach unten">▼</button>
-        </div>
-        <div class="node-main">
-          <div class="node-file">${esc(label)}${sub ? `<small>${sub}</small>` : ''}</div>
-          <div class="node-file"><small>${esc(n.fileName)} · TU ${n.TU ?? '–'} s</small></div>
-        </div>
-        <div class="node-dir-fields">
-          <div class="node-field hin">
-            <label>Hauptsignal Hin</label>
-            <select class="node-sig-select node-sig-hin">${sigOptions(n, n.mainColHin)}</select>
+      return `<div class="node-card card elev-sm" data-id="${n.id}">
+        <div class="node-card-head">
+          <div class="node-order">
+            <button type="button" class="btn btn-secondary btn-icon node-up" ${i === 0 ? 'disabled' : ''} title="nach oben">▲</button>
+            <button type="button" class="btn btn-secondary btn-icon node-down" ${i === nodes.length - 1 ? 'disabled' : ''} title="nach unten">▼</button>
           </div>
-          <div class="node-field hin">
-            <label>Abstand Hin [m]</label>
-            <input type="number" class="node-dist-input node-dist-hin" min="0" step="10" value="${distHin}" ${hinDisabled ? 'disabled' : ''}>
+          <div class="node-main">
+            <div class="node-title">${esc(label)}${sub}</div>
+            <div class="node-file">${esc(n.fileName)} · t_U ${n.TU ?? '–'} s</div>
           </div>
-          ${vpHinField}
-          <div class="node-field rev">
-            <label>Hauptsignal Rück</label>
-            <select class="node-sig-select node-sig-rev">${sigOptions(n, n.mainColRev)}</select>
-          </div>
-          ${revOffsetField}
+          <button type="button" class="btn btn-ghost node-remove" title="entfernen">Entfernen ✕</button>
         </div>
-        <button type="button" class="icon-btn node-remove" title="entfernen">×</button>
+        <div class="node-dirs">
+          <div>
+            <div class="tag tag-neutral">Hinrichtung</div>
+            <div class="node-dir-fields">
+              <div class="field field-wide">
+                <label>Hauptsignal</label>
+                <select class="input node-sig-select node-sig-hin">${sigOptions(n, n.mainColHin)}</select>
+              </div>
+              <div class="field">
+                <label>Abstand [m]</label>
+                <input class="input node-dist-hin" type="number" min="0" step="10" value="${distHin}" ${hinDisabled ? 'disabled' : ''}>
+              </div>
+              ${vpHinField}
+            </div>
+          </div>
+          <div>
+            <div class="tag tag-accent">Gegenrichtung</div>
+            <div class="node-dir-fields">
+              <div class="field field-wide">
+                <label>Hauptsignal</label>
+                <select class="input node-sig-select node-sig-rev">${sigOptions(n, n.mainColRev)}</select>
+              </div>
+              ${revOffsetField}
+            </div>
+          </div>
+        </div>
       </div>`;
     }).join('');
 
@@ -462,7 +494,7 @@
     if (!resHin.ok && !resRev.ok) {
       hidePanels();
       msgs.push('Mindestens zwei Knoten mit gültigem Hauptsignal und einem Abstand größer 0 (je Richtung) auswählen.');
-      showHint(msgs.join(' '), true);
+      showHint(msgs.join(' '));
       return;
     }
 
@@ -484,7 +516,7 @@
         msgs.push(`${label}: Die Aufzeichnungszeiträume der Knoten überschneiden sich nicht (z. B. verschiedene Tage) – die Koordinierung ist zeitlich nicht validierbar.`);
       }
     });
-    showHint(msgs.join(' '), msgs.length > 0);
+    showHint(msgs.join(' '));
 
     els.kpiPanel.style.display = 'block';
     els.diagramPanel.style.display = 'block';
@@ -705,6 +737,7 @@
     resizeTimer = setTimeout(recompute, 150);
   });
 
+  setTab(currentTab);
   renderNodeList();
   recompute();
 })(window.App = window.App || {});
