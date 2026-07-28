@@ -96,6 +96,11 @@
       if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
+    // Das Diagramm misst beim Rendern die Breite seines Containers - während
+    // der Diagramm-Tab per display:none verborgen ist, liefert das 0 (Fallback
+    // auf eine feste Breite). Ein Wechsel auf diesen Tab macht den Container
+    // erst sichtbar, daher hier neu rendern, damit die volle Breite genutzt wird.
+    if (tab === 'diagram') recompute();
   }
   els.tabLinks.forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); setTab(a.dataset.tab); }));
 
