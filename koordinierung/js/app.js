@@ -56,6 +56,13 @@
     diagram: document.getElementById('diagram'),
     tablePanel: document.getElementById('tablePanel'),
     tableBody: document.getElementById('tableBody'),
+    kmPanel: document.getElementById('kmPanel'),
+    kmFrom1: document.getElementById('kmFrom1'),
+    kmTo1: document.getElementById('kmTo1'),
+    kmResult1: document.getElementById('kmResult1'),
+    kmFrom2: document.getElementById('kmFrom2'),
+    kmTo2: document.getElementById('kmTo2'),
+    kmResult2: document.getElementById('kmResult2'),
     statsPanel: document.getElementById('statsPanel'),
     statsBody: document.getElementById('statsBody'),
     umlaufPanel: document.getElementById('umlaufPanel'),
@@ -85,6 +92,7 @@
     els.tablePanel.style.display = 'none';
     els.statsPanel.style.display = 'none';
     els.umlaufPanel.style.display = 'none';
+    els.kmPanel.style.display = 'none';
   }
 
   /* ---------------- Tabs (Setup / Diagramm / Statistik) ---------------- */
@@ -526,6 +534,7 @@
     els.kpiPanel.style.display = 'block';
     els.diagramPanel.style.display = 'block';
     els.tablePanel.style.display = 'block';
+    els.kmPanel.style.display = 'block';
 
     /* ---- Kenngrößen ---- */
     const kpis = [{ label: 'System-Umlaufzeit t_U', value: (resHin.ok ? resHin.TU : resRev.TU) + ' s' }];
@@ -556,7 +565,7 @@
       }
     });
     els.kpiGrid.innerHTML = kpis.map(k => `
-      <div class="kpi ${k.cls || ''}">
+      <div class="kpi card elev-sm ${k.cls || ''}">
         <div class="k-label">${k.label}</div>
         <div class="k-value">${k.value}</div>
         ${k.sub ? `<div class="k-sub">${esc(k.sub)}</div>` : ''}
@@ -587,6 +596,7 @@
     els.diagramInfo.textContent = `${parts.join(' · ')} · gesamte Historie (${durH} h)`;
 
     /* ---- Koordinationsstatistik ---- */
+    renderKm(resHin, resRev);
     renderStats(resHin, resRev);
     renderUmlaufTable(resHin, resRev);
 
@@ -609,6 +619,49 @@
       </tr>`;
     }).join('');
   }
+
+  /* ---------------- Koordinierungsmaß ---------------- */
+  // Zwei frei einstellbare Zeitbänder (z. B. Vormittags-/Nachmittagsspitze),
+  // je Band und Richtung ein Kachel-Ergebnis. Siehe
+  // App.coordination.computeKoordinierungsmass für die Formel.
+  function parseTimeToMinutes(value) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(value || '');
+    if (!m) return null;
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+  function renderKmBand(fromInput, toInput, targetEl, resHin, resRev) {
+    const fromMin = parseTimeToMinutes(fromInput.value);
+    const toMin = parseTimeToMinutes(toInput.value);
+    if (fromMin == null || toMin == null) { targetEl.innerHTML = ''; return; }
+    const tiles = [];
+    [['Hin', resHin], ['Rück', resRev]].forEach(([tag, res]) => {
+      if (!res.ok || !res.optimumBand) return;
+      const r = App.coordination.computeKoordinierungsmass(res.optimumBand.cycles, res.optimumBand.ordered.length, fromMin, toMin);
+      if (!r.n) {
+        tiles.push({ label: `Koordinierungsmaß ${tag}`, value: '–', sub: 'keine Messfahrten in diesem Zeitband' });
+        return;
+      }
+      const los = App.coordination.koordinierungsmassLos(r.pct);
+      const lowN = r.n < 5 ? ` · n=${r.n} Messfahrten (< 5 empfohlen)` : ` · n=${r.n} Messfahrten`;
+      tiles.push({
+        label: `Koordinierungsmaß ${tag}`, value: `${r.pct.toFixed(0)} %`,
+        subCls: los.cls, sub: `${los.label}${lowN}`
+      });
+    });
+    targetEl.innerHTML = tiles.length
+      ? tiles.map(t => `
+        <div class="kpi card elev-sm">
+          <div class="k-label">${t.label}</div>
+          <div class="k-value">${t.value}</div>
+          ${t.sub ? `<div class="k-sub ${t.subCls || ''}">${esc(t.sub)}</div>` : ''}
+        </div>`).join('')
+      : '<div class="node-empty">Keine Richtung aktiv.</div>';
+  }
+  function renderKm(resHin, resRev) {
+    renderKmBand(els.kmFrom1, els.kmTo1, els.kmResult1, resHin, resRev);
+    renderKmBand(els.kmFrom2, els.kmTo2, els.kmResult2, resHin, resRev);
+  }
+  [els.kmFrom1, els.kmTo1, els.kmFrom2, els.kmTo2].forEach(el => el.addEventListener('change', recompute));
 
   /* ---------------- Koordinationsstatistik ---------------- */
   // "Erfolgreiche" Koordination = das Optimum-Grünband durchläuft den

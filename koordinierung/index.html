@@ -130,6 +130,29 @@
 
     <!-- ============ STATISTICS TAB ============ -->
     <div class="tab-content" id="tabStats" style="display:none;">
+      <div class="card elev-md panel-card" id="kmPanel" style="display:none;">
+        <div class="panel-head"><h3>Koordinierungsmaß</h3></div>
+        <div class="km-bands">
+          <div class="km-band">
+            <div class="km-band-fields">
+              <span class="km-band-label">Zeitband 1</span>
+              <div class="field"><label>Von</label><input class="input" type="time" id="kmFrom1" value="06:00"></div>
+              <div class="field"><label>Bis</label><input class="input" type="time" id="kmTo1" value="07:00"></div>
+            </div>
+            <div class="kpi-grid" id="kmResult1"></div>
+          </div>
+          <div class="km-band">
+            <div class="km-band-fields">
+              <span class="km-band-label">Zeitband 2</span>
+              <div class="field"><label>Von</label><input class="input" type="time" id="kmFrom2" value="16:00"></div>
+              <div class="field"><label>Bis</label><input class="input" type="time" id="kmTo2" value="18:00"></div>
+            </div>
+            <div class="kpi-grid" id="kmResult2"></div>
+          </div>
+        </div>
+        <div class="panel-note">Koordinierungsmaß k = Durchfahrten ÷ ((Knotenpunkte im Koordinierungszug − 1) × Messfahrten) × 100 %. Je durchgehend erfasste Umlauf im Zeitband zählt als eine Messfahrt (mindestens 5 empfohlen für ein belastbares Ergebnis). Gütestufen: ≥95 % sehr gut · ≥85 % gut · ≥75 % mittel · ≥65 % mäßig · &lt;65 % unwirksam.</div>
+      </div>
+
       <div class="card elev-md panel-card" id="statsPanel" style="display:none;">
         <div class="panel-head"><h3>Koordinationsstatistik</h3></div>
         <div class="table-scroll">

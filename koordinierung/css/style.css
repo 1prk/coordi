@@ -80,6 +80,15 @@ html, body { margin: 0; padding: 0; }
 .kpi.accent .k-value { color: var(--color-accent-700); }
 .kpi.warn .k-value { color: var(--sig-red); }
 
+/* — Koordinierungsmaß — */
+.km-bands { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4); }
+.km-band + .km-band { border-top: 1px solid var(--color-divider); padding-top: var(--space-4); }
+.km-band-fields { display: flex; align-items: flex-end; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.km-band-label { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px; padding-bottom: 8px; }
+.km-band-fields .field { width: 130px; }
+.km-band .kpi-grid { margin-bottom: 0; }
+.km-band .kpi .k-sub.stat-ok, .km-band .kpi .k-sub.stat-warn, .km-band .kpi .k-sub.stat-bad { font-weight: 700; }
+
 /* — panel cards (diagram / umlauf / stats / corridor table) — */
 .panel-card { padding: 0; gap: 0; display: block; margin-bottom: var(--space-4); }
 .panel-head {

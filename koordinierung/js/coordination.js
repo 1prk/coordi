@@ -268,6 +268,12 @@
     // Ausgang über den ganzen Streckenzug - Basis für die "Sprung"-Tabelle:
     // erfolgreich (durchgehend bis zum letzten Knoten) oder gescheitert
     // (mit Angabe, an welchem Knoten es zuerst nicht mehr passte).
+    // survivedIdx zählt zugleich die "Durchfahrten" dieses Umlaufs im Sinne
+    // des Koordinierungsmaßes (siehe computeKoordinierungsmass): die Anzahl
+    // der Knoten-Übergänge (von N_K,LSA - 1 möglichen), die ohne Halt
+    // passiert wurden - 0, wenn schon der erste Folgeknoten nicht erreicht
+    // wurde, bis maximal stages.length - 1 (= ordered.length - 1) bei
+    // vollständiger Durchfahrt.
     const cycles = stages[0].map(start0 => {
       let survivedIdx = 0;
       for (let s = 1; s < stages.length; s++) {
@@ -280,15 +286,52 @@
         start: start0.segStart, end: start0.segEnd,
         success,
         failedAt: success ? null : ordered[survivedIdx + 1],
-        finalWidth: success ? minTf : null
+        finalWidth: success ? minTf : null,
+        durchfahrten: survivedIdx
       };
     });
 
     return { ordered, tau, minTf, segments, perStation, overall, cycles };
   }
 
+  // Koordinierungsmaß k [%]: der mittlere Anteil der Knotenpunkte mit LSA in
+  // der koordinierten Folge, die im koordinierten Verkehrsstrom ohne Halt
+  // passiert werden - nach Zeitraum eingegrenzt (z. B. Spitzenstunde), da
+  // die App mit durchgehenden Aufzeichnungen statt einzelner Messfahrten
+  // arbeitet: jeder reale Umlauf (cycle) aus computeOptimumBand, dessen
+  // Start in [fromMin, toMin) liegt, zählt als eine Messfahrt.
+  //   k = D_i / ((N_K,LSA - 1) * n) * 100
+  // D_i = Summe der Durchfahrten (cycle.durchfahrten) über alle Messfahrten,
+  // N_K,LSA = Anzahl Knoten im Koordinierungszug, n = Anzahl Messfahrten im
+  // Zeitband. fromMin/toMin sind Minuten seit Mitternacht (0-1439); toMin <=
+  // fromMin wird als über Mitternacht laufendes Band interpretiert.
+  function computeKoordinierungsmass(cycles, totalKnoten, fromMin, toMin) {
+    if (!cycles || totalKnoten < 2) return { n: 0 };
+    const inBand = (ms) => {
+      const d = new Date(ms);
+      const mins = d.getHours() * 60 + d.getMinutes();
+      return fromMin <= toMin ? (mins >= fromMin && mins < toMin) : (mins >= fromMin || mins < toMin);
+    };
+    const runs = cycles.filter(c => inBand(c.start));
+    const n = runs.length;
+    if (!n) return { n: 0 };
+    const sumDurchfahrten = runs.reduce((a, c) => a + c.durchfahrten, 0);
+    const pct = (sumDurchfahrten / ((totalKnoten - 1) * n)) * 100;
+    return { n, sumDurchfahrten, totalKnoten, pct };
+  }
+
+  // Gütestufe (Qualitätsstufe) nach Koordinierungsmaß.
+  function koordinierungsmassLos(pct) {
+    if (pct >= 95) return { label: 'sehr gut', cls: 'stat-ok' };
+    if (pct >= 85) return { label: 'gut', cls: 'stat-ok' };
+    if (pct >= 75) return { label: 'mittel', cls: 'stat-warn' };
+    if (pct >= 65) return { label: 'mäßig', cls: 'stat-bad' };
+    return { label: 'unwirksam', cls: 'stat-bad' };
+  }
+
   App.coordination = {
     greenCenter, deriveVp, teilpunktabstand, lageLabel,
-    computeQualitativeBand, computeOptimumBand
+    computeQualitativeBand, computeOptimumBand,
+    computeKoordinierungsmass, koordinierungsmassLos
   };
 })(window.App = window.App || {});
