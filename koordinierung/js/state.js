@@ -28,11 +28,6 @@
     return {
       id: uid(),
       fileName,
-      // Rohtext der Original-CSV - für den Konfigurations-Export
-      // (JSON-Sicherung/Wiederherstellung, siehe app.js) mitgeführt, damit
-      // sich ein Knoten beim Import ohne erneutes Hochladen der Datei
-      // vollständig neu aufbauen lässt.
-      rawText: text,
       knotenName: parsed.knotenName,
       knotenNr: parsed.knotenNr,
       columns: parsed.columns,

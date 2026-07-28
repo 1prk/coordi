@@ -78,35 +78,96 @@
     els.umlaufIndexPanel.style.display = 'none';
   }
 
+  // Beim Import einer Konfigurations-JSON zwischengespeichert, bis die
+  // dazugehörigen CSV-Dateien (erneut) ausgewählt wurden - siehe
+  // "Konfiguration exportieren/importieren" unten.
+  let pendingImport = null;
+
   /* ---------------- Datei-Import ---------------- */
   els.btnAddFile.addEventListener('click', () => els.fileInput.click());
   els.fileInput.addEventListener('change', async () => {
     const files = Array.from(els.fileInput.files || []);
     els.fileInput.value = '';
+    const importCtx = pendingImport;
+    pendingImport = null;
+    if (importCtx) state.clearIntersections();
+
     for (const file of files) {
       try {
         const text = await file.text();
         const entry = state.buildIntersection(file.name, text);
+        if (importCtx) {
+          const saved = importCtx.nodes.find(n => n.fileName === file.name);
+          if (saved) {
+            if (saved.mainColHin != null) entry.mainColHin = saved.mainColHin;
+            if (saved.mainColRev != null) entry.mainColRev = saved.mainColRev;
+            entry.distanceHin = Number(saved.distanceHin) || 0;
+            entry.distanceRev = Number(saved.distanceRev) || 0;
+            entry.revOffset = Number(saved.revOffset) || 0;
+            entry.vpHin = Number(saved.vpHin) || 50;
+            entry.vpRev = Number(saved.vpRev) || 50;
+          }
+        }
         state.addIntersection(entry);
         clearError();
       } catch (e) {
         showError(`${file.name}: ${e.message}`);
       }
     }
+
+    if (importCtx) {
+      // Reihenfolge der gespeicherten Konfiguration wiederherstellen (die
+      // Auswahlreihenfolge im Datei-Dialog des Betriebssystems ist nicht
+      // garantiert dieselbe) - Knoten, deren Datei nicht mit ausgewählt
+      // wurde, fehlen und werden gemeldet; zusätzlich ausgewählte, nicht in
+      // der Konfiguration enthaltene Dateien werden ans Ende angehängt.
+      const orderedNames = importCtx.nodes.map(n => n.fileName);
+      const current = state.intersections.slice();
+      const reordered = [];
+      orderedNames.forEach(fn => {
+        const idx = current.findIndex(n => n.fileName === fn && !reordered.includes(n));
+        if (idx >= 0) reordered.push(current[idx]);
+      });
+      current.forEach(n => { if (!reordered.includes(n)) reordered.push(n); });
+      state.clearIntersections();
+      reordered.forEach(n => state.addIntersection(n));
+
+      if (importCtx.settings) {
+        els.baseStationInput.value = importCtx.settings.baseStation ?? 0;
+        els.dirSelect.value = importCtx.settings.dirMode ?? 'both';
+        els.bandQualitativeInput.checked = !!importCtx.settings.showQualitative;
+        els.bandOptimumInput.checked = !!importCtx.settings.showOptimum;
+        els.showTimestampInput.checked = !!importCtx.settings.showTimestamp;
+      }
+      const missing = orderedNames.filter(fn => !reordered.some(n => n.fileName === fn));
+      renderNodeList();
+      recompute();
+      // NACH recompute() gesetzt (nicht showHint) - recompute() überschreibt
+      // den Hinweis-Kasten am Ende immer mit seinen eigenen Meldungen; die
+      // Fehlerbox bleibt davon unberührt, daher hier für die
+      // Import-spezifische Meldung verwendet.
+      if (missing.length) {
+        showError(`Import unvollständig: ${missing.length} Datei(en) aus der Konfiguration wurden nicht ausgewählt und fehlen: ${missing.join(', ')}`);
+      }
+      return;
+    }
+
     renderNodeList();
     recompute();
   });
 
   /* ---------------- Konfiguration exportieren/importieren ---------------- */
-  // Rein clientseitig (Blob-Download / FileReader) - läuft ohne Server auch
-  // unter file://, kein CORS-Risiko, da keine Netzwerkanfrage involviert
-  // ist. Der Export bettet den ROHTEXT jeder Knoten-CSV mit ein (nicht nur
-  // Dateiname/Einstellungen), damit sich eine gespeicherte Konfiguration
-  // ohne erneutes Wiederfinden/Hochladen der Original-Dateien vollständig
-  // wiederherstellen lässt.
+  // Rein clientseitig, kein Netzwerkzugriff (kein CORS-Risiko), läuft daher
+  // identisch unter file://. Der Export enthält NICHT die CSV-Rohdaten
+  // selbst - nur den Dateinamen je Knoten plus alle Einstellungen
+  // (Abstände, V_p, Hauptsignal-Wahl, Basis-Station, Anzeigeoptionen). Beim
+  // Import müssen die referenzierten CSV-Dateien daher erneut ausgewählt
+  // werden (der Browser kann aus Sicherheitsgründen nicht selbst auf
+  // Dateipfade zugreifen) - die Einstellungen werden dann anhand des
+  // Dateinamens wieder zugeordnet.
   function exportConfig() {
     const data = {
-      formatVersion: 1,
+      formatVersion: 2,
       exportedAt: new Date().toISOString(),
       settings: {
         baseStation: Number(els.baseStationInput.value) || 0,
@@ -117,7 +178,6 @@
       },
       nodes: state.intersections.map(n => ({
         fileName: n.fileName,
-        rawText: n.rawText,
         mainColHin: n.mainColHin,
         mainColRev: n.mainColRev,
         distanceHin: n.distanceHin,
@@ -139,11 +199,15 @@
     URL.revokeObjectURL(url);
   }
 
-  async function importConfig(file) {
+  els.btnExport.addEventListener('click', exportConfig);
+  els.btnImport.addEventListener('click', () => els.importInput.click());
+  els.importInput.addEventListener('change', async () => {
+    const file = els.importInput.files && els.importInput.files[0];
+    els.importInput.value = '';
+    if (!file) return;
     let data;
     try {
-      const text = await file.text();
-      data = JSON.parse(text);
+      data = JSON.parse(await file.text());
     } catch (e) {
       showError(`Import fehlgeschlagen: ${e.message}`);
       return;
@@ -152,42 +216,9 @@
       showError('Import fehlgeschlagen: Datei enthält keine gültige Koordinierung-Konfiguration.');
       return;
     }
-    state.clearIntersections();
-    data.nodes.forEach(nodeData => {
-      let entry;
-      try {
-        entry = state.buildIntersection(nodeData.fileName || 'import.csv', nodeData.rawText || '');
-      } catch (e) {
-        showError(`${nodeData.fileName || 'Knoten'}: ${e.message}`);
-        return;
-      }
-      if (nodeData.mainColHin != null) entry.mainColHin = nodeData.mainColHin;
-      if (nodeData.mainColRev != null) entry.mainColRev = nodeData.mainColRev;
-      entry.distanceHin = Number(nodeData.distanceHin) || 0;
-      entry.distanceRev = Number(nodeData.distanceRev) || 0;
-      entry.revOffset = Number(nodeData.revOffset) || 0;
-      entry.vpHin = Number(nodeData.vpHin) || 50;
-      entry.vpRev = Number(nodeData.vpRev) || 50;
-      state.addIntersection(entry);
-    });
-    if (data.settings) {
-      els.baseStationInput.value = data.settings.baseStation ?? 0;
-      els.dirSelect.value = data.settings.dirMode ?? 'both';
-      els.bandQualitativeInput.checked = !!data.settings.showQualitative;
-      els.bandOptimumInput.checked = !!data.settings.showOptimum;
-      els.showTimestampInput.checked = !!data.settings.showTimestamp;
-    }
-    clearError();
-    renderNodeList();
-    recompute();
-  }
-
-  els.btnExport.addEventListener('click', exportConfig);
-  els.btnImport.addEventListener('click', () => els.importInput.click());
-  els.importInput.addEventListener('change', async () => {
-    const file = els.importInput.files && els.importInput.files[0];
-    els.importInput.value = '';
-    if (file) await importConfig(file);
+    pendingImport = data;
+    showHint(`Konfiguration geladen (${data.nodes.length} Knoten). Bitte jetzt dieselben CSV-Dateien erneut auswählen: ${data.nodes.map(n => n.fileName).join(', ')}`, false);
+    els.fileInput.click();
   });
 
   /* ---------------- Knotenliste ---------------- */
