@@ -76,6 +76,30 @@
     <div class="diagram-wrap" id="diagram"></div>
   </div>
 
+  <div class="panel" id="umlaufPanel" style="display:none;">
+    <div class="panel-head">
+      <span>Umlaufübersicht</span>
+      <span class="seg" id="umlaufFilterSeg">
+        <label class="seg-opt"><input type="radio" name="umlaufFilter" value="all" checked> Alle</label>
+        <label class="seg-opt"><input type="radio" name="umlaufFilter" value="ja"> Durchfahrt</label>
+        <label class="seg-opt"><input type="radio" name="umlaufFilter" value="nein"> Gescheitert</label>
+      </span>
+    </div>
+    <div class="table-scroll cycle-jump-scroll">
+    <table class="stats-table">
+      <thead><tr>
+        <th>Umlauf</th>
+        <th>Start</th>
+        <th>Ende</th>
+        <th>Durchfahrt</th>
+        <th>Bandbreite</th>
+      </tr></thead>
+      <tbody id="umlaufBody"></tbody>
+    </table>
+    </div>
+    <div class="hint-box" style="margin:0 12px 12px;">Zeile anklicken springt im Zeit-Weg-Diagramm zum Umlaufbeginn. Durchfahrt = Optimum-Grünband erreicht durchgehend den letzten Knoten.</div>
+  </div>
+
   <div class="panel" id="statsPanel" style="display:none;">
     <div class="panel-head">Koordinationsstatistik</div>
     <div class="table-scroll">
@@ -92,37 +116,6 @@
     </table>
     </div>
     <div class="hint-box" style="margin:0 12px 12px;">Erfolgreiche Koordination = das Optimum-Grünband durchläuft den Umlauf durchgehend bis zum jeweiligen Knoten, ohne an einer Station auf Rot zu treffen. „Eintretend" je Übergang ist die Anzahl der Umläufe, die den vorherigen Knoten noch durchgehend Grün erreicht haben. Die Bandbreite ist die schmalste Grünzeit im gesamten Streckenzug (Engpass) und über alle Abschnitte konstant.</div>
-  </div>
-
-  <div class="panel" id="cycleJumpPanel" style="display:none;">
-    <div class="panel-head">Umlauf-Liste</div>
-    <div class="table-scroll cycle-jump-scroll">
-    <table class="stats-table">
-      <thead><tr>
-        <th>Verstrichen</th>
-        <th>Zeitpunkt</th>
-        <th>Status</th>
-        <th>Detail</th>
-      </tr></thead>
-      <tbody id="cycleJumpBody"></tbody>
-    </table>
-    </div>
-    <div class="hint-box" style="margin:0 12px 12px;">Zeile anklicken springt im Zeit-Weg-Diagramm oben zu diesem Umlauf.</div>
-  </div>
-
-  <div class="panel" id="umlaufIndexPanel" style="display:none;">
-    <div class="panel-head">Umlaufindex</div>
-    <div class="table-scroll cycle-jump-scroll">
-    <table class="stats-table">
-      <thead><tr>
-        <th>Umlauf</th>
-        <th>Verstrichen</th>
-        <th>Zeitpunkt</th>
-      </tr></thead>
-      <tbody id="umlaufIndexBody"></tbody>
-    </table>
-    </div>
-    <div class="hint-box" style="margin:0 12px 12px;">Durchgehende Nummerierung jedes Umlaufs ab Beginn der Aufzeichnung (Umlauf 0 = die ersten t_U Sekunden), unabhängig von Richtung oder realen Grünvorkommen - entspricht den "U{n}"-Beschriftungen am rechten Diagrammrand. Zeile anklicken springt zum jeweiligen Umlauf.</div>
   </div>
 
   <div class="panel" id="tablePanel" style="display:none;">

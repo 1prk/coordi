@@ -1,16 +1,15 @@
 /* Koordinierung – UI-Verdrahtung */
 (function (App) {
   'use strict';
-  const { esc, fmtElapsed, fmtDateTimeShort, clamp } = App.utils;
+  const { esc, fmtDateTimeShort, clamp } = App.utils;
   const { deriveVp, teilpunktabstand, lageLabel, computeQualitativeBand, computeOptimumBand } = App.coordination;
   const { renderDiagram } = App.diagram;
   const state = App.state;
 
   // Vom Diagramm zurückgegebene API (aktuelles renderDiagram-Ergebnis) -
-  // erlaubt Sprünge zu einem bestimmten Zeitpunkt aus der Umlauf-Liste
+  // erlaubt Sprünge zu einem bestimmten Zeitpunkt aus der Umlaufübersicht
   // heraus, ohne dass der Diagramm-Code selbst vom App-Code wissen muss.
   let diagramApi = null;
-  let globalTMinRef = 0;
 
   // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
   // weiter heraus. Wird als Faktor an renderDiagram gereicht (dort mit der
@@ -22,6 +21,10 @@
     zoomLevel = clamp(next, ZOOM_MIN, ZOOM_MAX);
     recompute();
   }
+
+  // Filter der Umlaufübersicht-Tabelle (unterhalb des Diagramms):
+  // 'all' | 'ja' (nur durchgefahrene Umläufe) | 'nein' (nur gescheiterte).
+  let umlaufFilter = 'all';
 
   const els = {
     btnAddFile: document.getElementById('btnAddFile'),
@@ -46,10 +49,9 @@
     tableBody: document.getElementById('tableBody'),
     statsPanel: document.getElementById('statsPanel'),
     statsBody: document.getElementById('statsBody'),
-    cycleJumpPanel: document.getElementById('cycleJumpPanel'),
-    cycleJumpBody: document.getElementById('cycleJumpBody'),
-    umlaufIndexPanel: document.getElementById('umlaufIndexPanel'),
-    umlaufIndexBody: document.getElementById('umlaufIndexBody'),
+    umlaufPanel: document.getElementById('umlaufPanel'),
+    umlaufBody: document.getElementById('umlaufBody'),
+    umlaufFilterSeg: document.getElementById('umlaufFilterSeg'),
     zoomOutBtn: document.getElementById('zoomOutBtn'),
     zoomResetBtn: document.getElementById('zoomResetBtn'),
     zoomInBtn: document.getElementById('zoomInBtn'),
@@ -74,8 +76,7 @@
     els.diagramPanel.style.display = 'none';
     els.tablePanel.style.display = 'none';
     els.statsPanel.style.display = 'none';
-    els.cycleJumpPanel.style.display = 'none';
-    els.umlaufIndexPanel.style.display = 'none';
+    els.umlaufPanel.style.display = 'none';
   }
 
   // Beim Import einer Konfigurations-JSON zwischengespeichert, bis die
@@ -541,7 +542,6 @@
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
     diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, zoomLevel, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
-    globalTMinRef = globalTMin;
     els.zoomLabel.textContent = Math.round(zoomLevel * 100) + ' %';
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
@@ -551,8 +551,7 @@
 
     /* ---- Koordinationsstatistik ---- */
     renderStats(resHin, resRev);
-    renderCycleJump(resHin, resRev);
-    renderUmlaufIndex(TU, globalTMin, globalTMax);
+    renderUmlaufTable(resHin, resRev);
 
     /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
     const nodes = state.intersections;
@@ -616,82 +615,62 @@
     els.statsBody.innerHTML = rows.join('');
   }
 
-  /* ---------------- Umlauf-Sprungliste ---------------- */
+  /* ---------------- Umlaufübersicht ---------------- */
   // Eine Zeile je realem Umlauf (Ursprungsgrünfenster am ersten Knoten) mit
   // Erfolg/Misserfolg des Optimum-Bands über den ganzen Streckenzug - Klick
-  // springt im Zeit-Weg-Diagramm direkt zu diesem Zeitpunkt. Bei sehr langen
-  // Aufzeichnungen wird die Liste je Richtung gekappt (Performance), mit
-  // Hinweis auf die Anzahl ausgeblendeter Umläufe.
-  const CYCLE_JUMP_MAX = 500;
-  function renderCycleJump(resHin, resRev) {
+  // springt im Zeit-Weg-Diagramm direkt zu diesem Zeitpunkt. Umlauf-Nummer =
+  // Index innerhalb der (ungefilterten) Zykluskette der jeweiligen Richtung.
+  // Der Segment-Filter im Panel-Kopf (Alle/Durchfahrt/Gescheitert) grenzt auf
+  // umlaufFilter ein. Bei sehr langen Aufzeichnungen wird die gefilterte
+  // Liste je Richtung gekappt (Performance), mit Hinweis auf die Anzahl
+  // ausgeblendeter Umläufe.
+  const UMLAUF_TABLE_MAX = 500;
+  function renderUmlaufTable(resHin, resRev) {
     const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
       .filter(([, res]) => res.ok && res.optimumBand && res.optimumBand.cycles.length);
-    if (dirs.length === 0) { els.cycleJumpPanel.style.display = 'none'; return; }
-    els.cycleJumpPanel.style.display = 'block';
+    if (dirs.length === 0) { els.umlaufPanel.style.display = 'none'; return; }
+    els.umlaufPanel.style.display = 'block';
     const rows = [];
     dirs.forEach(([label, res, color]) => {
       const cycles = res.optimumBand.cycles;
-      const shown = cycles.slice(0, CYCLE_JUMP_MAX);
-      rows.push(`<tr class="stats-dir-row"><td colspan="4" style="color:${color}">${esc(label)} (${cycles.length} Umläufe${cycles.length > CYCLE_JUMP_MAX ? `, erste ${CYCLE_JUMP_MAX} angezeigt` : ''})</td></tr>`);
-      shown.forEach(c => {
-        const statusCls = c.success ? 'stat-ok' : 'stat-bad';
-        const statusText = c.success ? 'Erfolgreich' : 'Gescheitert';
-        const detail = c.success
-          ? `Breite ${c.finalWidth.toFixed(1)} s`
-          : `an ${esc(c.failedAt ? c.failedAt.name : '–')}`;
+      const filtered = cycles
+        .map((c, i) => ({ c, i }))
+        .filter(({ c }) => umlaufFilter === 'all' || (umlaufFilter === 'ja' ? c.success : !c.success));
+      const shown = filtered.slice(0, UMLAUF_TABLE_MAX);
+      if (dirs.length > 1) {
+        rows.push(`<tr class="stats-dir-row"><td colspan="5" style="color:${color}">${esc(label)} (${filtered.length} von ${cycles.length} Umläufen${filtered.length > UMLAUF_TABLE_MAX ? `, erste ${UMLAUF_TABLE_MAX} angezeigt` : ''})</td></tr>`);
+      }
+      shown.forEach(({ c, i }) => {
+        const durchfahrtCls = c.success ? 'stat-ok' : 'stat-bad';
         rows.push(`<tr class="cycle-jump-row" data-t="${c.start}" tabindex="0">
-          <td>${esc(fmtElapsed(c.start - globalTMinRef))}</td>
+          <td>Umlauf ${i}</td>
           <td>${esc(fmtDateTimeShort(c.start))}</td>
-          <td class="${statusCls}">${statusText}</td>
-          <td>${detail}</td>
+          <td>${esc(fmtDateTimeShort(c.end))}</td>
+          <td class="${durchfahrtCls}">${c.success ? 'Ja' : 'Nein'}</td>
+          <td>${c.success ? `${c.finalWidth} s` : '–'}</td>
         </tr>`);
       });
     });
-    els.cycleJumpBody.innerHTML = rows.join('');
+    els.umlaufBody.innerHTML = rows.join('');
   }
 
-  /* ---------------- Umlaufindex ---------------- */
-  // Durchnummeriert JEDEN Umlauf der gesamten (Richtungs-unabhängigen)
-  // Zeitachse ab globalTMin - Umlauf 0 = [globalTMin, globalTMin+TU), Umlauf
-  // 1 das nächste TU-Intervall usw. (siehe "U{n}"-Beschriftung rechts im
-  // Diagramm). Dient als reine Zeit-Referenz (nicht an ein reales
-  // Grünvorkommen gebunden wie die Umlauf-Sprungliste), damit sich ein
-  // beliebiger Punkt der Aufzeichnung eindeutig benennen und wiederfinden
-  // lässt. Zeile anklicken springt an den Anfang dieses Umlaufs.
-  const UMLAUF_INDEX_MAX = 1000;
-  function renderUmlaufIndex(TU, globalTMin, globalTMax) {
-    if (!TU || !(globalTMax > globalTMin)) { els.umlaufIndexPanel.style.display = 'none'; return; }
-    els.umlaufIndexPanel.style.display = 'block';
-    const cycleMs = TU * 1000;
-    const totalCycles = Math.ceil((globalTMax - globalTMin) / cycleMs);
-    const shown = Math.min(totalCycles, UMLAUF_INDEX_MAX);
-    const rows = [];
-    for (let k = 0; k < shown; k++) {
-      const start = globalTMin + k * cycleMs;
-      const end = Math.min(start + cycleMs, globalTMax);
-      rows.push(`<tr class="cycle-jump-row" data-t="${start}" tabindex="0">
-        <td>Umlauf ${k}</td>
-        <td>${esc(fmtElapsed(start - globalTMin))} – ${esc(fmtElapsed(end - globalTMin))}</td>
-        <td>${esc(fmtDateTimeShort(start))} – ${esc(fmtDateTimeShort(end))}</td>
-      </tr>`);
-    }
-    if (totalCycles > shown) {
-      rows.push(`<tr><td colspan="3" style="color:var(--text-faint);font-style:italic;">… ${totalCycles - shown} weitere Umläufe ausgeblendet</td></tr>`);
-    }
-    els.umlaufIndexBody.innerHTML = rows.join('');
-  }
-
-  els.umlaufIndexBody.addEventListener('click', (e) => {
+  els.umlaufBody.addEventListener('click', (e) => {
     const row = e.target.closest('tr[data-t]');
     if (!row || !diagramApi) return;
     diagramApi.scrollToTime(Number(row.dataset.t));
   });
-  els.umlaufIndexBody.addEventListener('keydown', (e) => {
+  els.umlaufBody.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const row = e.target.closest('tr[data-t]');
     if (!row || !diagramApi) return;
     e.preventDefault();
     diagramApi.scrollToTime(Number(row.dataset.t));
+  });
+
+  els.umlaufFilterSeg.addEventListener('change', (e) => {
+    if (e.target.name !== 'umlaufFilter') return;
+    umlaufFilter = e.target.value;
+    recompute();
   });
 
   /* ---------------- Y-Achsen-Zoom ---------------- */
@@ -717,19 +696,6 @@
       setZoom(zoomLevel * factor);
     });
   }, { passive: false });
-
-  els.cycleJumpBody.addEventListener('click', (e) => {
-    const row = e.target.closest('tr[data-t]');
-    if (!row || !diagramApi) return;
-    diagramApi.scrollToTime(Number(row.dataset.t));
-  });
-  els.cycleJumpBody.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const row = e.target.closest('tr[data-t]');
-    if (!row || !diagramApi) return;
-    e.preventDefault();
-    diagramApi.scrollToTime(Number(row.dataset.t));
-  });
 
   [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput, els.showTimestampInput].forEach(el => el.addEventListener('change', recompute));
 
