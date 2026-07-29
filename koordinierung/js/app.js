@@ -11,9 +11,10 @@
   // heraus, ohne dass der Diagramm-Code selbst vom App-Code wissen muss.
   let diagramApi = null;
   // Dasselbe für den D3-Diagramm-Prototyp (eigener Tab, eigenes Modul
-  // js/diagram-d3.js - siehe dort). Verwaltet Zoom/Pan intern über d3-zoom,
-  // braucht anders als das klassische Diagramm keinen extern getrackten
-  // zoomLevel.
+  // js/diagram-d3.js) - identisches Interaktionsmodell wie das klassische
+  // Diagramm (natives Scrollen/Mausrad durch die Zeit, eigener zoomLevel für
+  // Strg+Mausrad/Zoom-Buttons), daher auch eine eigene API-Variable analog
+  // zu diagramApi statt einer d3-zoom-eigenen Lösung.
   let diagramD3Api = null;
 
   // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
@@ -26,10 +27,19 @@
     zoomLevel = clamp(next, ZOOM_MIN, ZOOM_MAX);
     recompute();
   }
+  // Eigener Zoom-Zustand für das D3-Diagramm (unabhängig vom klassischen
+  // Diagramm - beide Tabs können unterschiedlich weit gezoomt sein).
+  let zoomLevelD3 = 1;
+  function setZoomD3(next) {
+    zoomLevelD3 = clamp(next, ZOOM_MIN, ZOOM_MAX);
+    recompute();
+  }
 
-  // Filter der Umlaufübersicht-Tabelle (unterhalb des Diagramms):
+  // Filter der Umlaufübersicht-Tabelle (unterhalb des klassischen Diagramms).
   // 'all' | 'ja' (nur durchgefahrene Umläufe) | 'nein' (nur gescheiterte).
   let umlaufFilter = 'all';
+  // Dasselbe für die (unabhängige) Umlaufübersicht neben dem D3-Diagramm.
+  let umlaufFilterD3 = 'all';
 
   // Aktiver Tab: 'setup' | 'diagram' | 'stats'. Start bei 'setup', da die App
   // (anders als die Referenz) ohne vorgeladene Beispieldaten startet - ein
@@ -44,7 +54,13 @@
     tabStats: document.getElementById('tabStats'),
     d3Panel: document.getElementById('d3Panel'),
     d3Diagram: document.getElementById('d3Diagram'),
+    d3ZoomOutBtn: document.getElementById('d3ZoomOutBtn'),
     d3ZoomResetBtn: document.getElementById('d3ZoomResetBtn'),
+    d3ZoomInBtn: document.getElementById('d3ZoomInBtn'),
+    d3ZoomLabel: document.getElementById('d3ZoomLabel'),
+    d3UmlaufPanel: document.getElementById('d3UmlaufPanel'),
+    d3UmlaufBody: document.getElementById('d3UmlaufBody'),
+    d3UmlaufFilterSeg: document.getElementById('d3UmlaufFilterSeg'),
     btnAddFile: document.getElementById('btnAddFile'),
     fileInput: document.getElementById('fileInput'),
     btnExport: document.getElementById('btnExport'),
@@ -103,6 +119,7 @@
     els.umlaufPanel.style.display = 'none';
     els.kmPanel.style.display = 'none';
     els.d3Panel.style.display = 'none';
+    els.d3UmlaufPanel.style.display = 'none';
   }
 
   /* ---------------- Tabs (Setup / Diagramm / Diagramm (D3) / Statistik) ---------------- */
@@ -572,6 +589,7 @@
     els.kpiPanel.style.display = 'block';
     els.diagramPanel.style.display = 'block';
     els.d3Panel.style.display = 'block';
+    els.d3UmlaufPanel.style.display = 'block';
     els.tablePanel.style.display = 'block';
     els.kmPanel.style.display = 'block';
 
@@ -634,12 +652,14 @@
     const durH = ((globalTMax - globalTMin) / 3600000).toFixed(1);
     els.diagramInfo.textContent = `${parts.join(' · ')} · gesamte Historie (${durH} h)`;
 
-    diagramD3Api = App.diagramD3.renderDiagram(els.d3Diagram, { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    diagramD3Api = App.diagramD3.renderDiagram(els.d3Diagram, { TU, showQualitative, showOptimum, showTimestamp, zoomLevel: zoomLevelD3, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    els.d3ZoomLabel.textContent = Math.round(zoomLevelD3 * 100) + ' %';
 
     /* ---- Koordinationsstatistik ---- */
     renderKm(resHin, resRev);
     renderStats(resHin, resRev);
-    renderUmlaufTable(resHin, resRev);
+    renderUmlaufTable(resHin, resRev, umlaufFilter, els.umlaufPanel, els.umlaufBody);
+    renderUmlaufTable(resHin, resRev, umlaufFilterD3, els.d3UmlaufPanel, els.d3UmlaufBody);
 
     /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
     const nodes = state.intersections;
@@ -756,17 +776,21 @@
   // Liste je Richtung gekappt (Performance), mit Hinweis auf die Anzahl
   // ausgeblendeter Umläufe.
   const UMLAUF_TABLE_MAX = 500;
-  function renderUmlaufTable(resHin, resRev) {
+  // panelEl/bodyEl/filterValue parametrisiert, damit dieselbe Tabelle sowohl
+  // neben dem klassischen als auch neben dem D3-Diagramm gerendert werden
+  // kann (siehe die beiden Aufrufe in recompute()) - jede Instanz hat ihren
+  // eigenen Filter-Zustand (umlaufFilter / umlaufFilterD3).
+  function renderUmlaufTable(resHin, resRev, filterValue, panelEl, bodyEl) {
     const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
       .filter(([, res]) => res.ok && res.optimumBand && res.optimumBand.cycles.length);
-    if (dirs.length === 0) { els.umlaufPanel.style.display = 'none'; return; }
-    els.umlaufPanel.style.display = 'block';
+    if (dirs.length === 0) { panelEl.style.display = 'none'; return; }
+    panelEl.style.display = 'block';
     const rows = [];
     dirs.forEach(([label, res, color]) => {
       const cycles = res.optimumBand.cycles;
       const filtered = cycles
         .map((c, i) => ({ c, i }))
-        .filter(({ c }) => umlaufFilter === 'all' || (umlaufFilter === 'ja' ? c.success : !c.success));
+        .filter(({ c }) => filterValue === 'all' || (filterValue === 'ja' ? c.success : !c.success));
       const shown = filtered.slice(0, UMLAUF_TABLE_MAX);
       if (dirs.length > 1) {
         rows.push(`<tr class="stats-dir-row"><td colspan="5" style="color:${color}">${esc(label)} (${filtered.length} von ${cycles.length} Umläufen${filtered.length > UMLAUF_TABLE_MAX ? `, erste ${UMLAUF_TABLE_MAX} angezeigt` : ''})</td></tr>`);
@@ -782,25 +806,36 @@
         </tr>`);
       });
     });
-    els.umlaufBody.innerHTML = rows.join('');
+    bodyEl.innerHTML = rows.join('');
   }
 
-  els.umlaufBody.addEventListener('click', (e) => {
-    const row = e.target.closest('tr[data-t]');
-    if (!row || !diagramApi) return;
-    diagramApi.scrollToTime(Number(row.dataset.t));
-  });
-  els.umlaufBody.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const row = e.target.closest('tr[data-t]');
-    if (!row || !diagramApi) return;
-    e.preventDefault();
-    diagramApi.scrollToTime(Number(row.dataset.t));
-  });
+  function wireUmlaufJump(bodyEl, getDiagramApi) {
+    bodyEl.addEventListener('click', (e) => {
+      const row = e.target.closest('tr[data-t]');
+      const api = getDiagramApi();
+      if (!row || !api) return;
+      api.scrollToTime(Number(row.dataset.t));
+    });
+    bodyEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('tr[data-t]');
+      const api = getDiagramApi();
+      if (!row || !api) return;
+      e.preventDefault();
+      api.scrollToTime(Number(row.dataset.t));
+    });
+  }
+  wireUmlaufJump(els.umlaufBody, () => diagramApi);
+  wireUmlaufJump(els.d3UmlaufBody, () => diagramD3Api);
 
   els.umlaufFilterSeg.addEventListener('change', (e) => {
     if (e.target.name !== 'umlaufFilter') return;
     umlaufFilter = e.target.value;
+    recompute();
+  });
+  els.d3UmlaufFilterSeg.addEventListener('change', (e) => {
+    if (e.target.name !== 'd3UmlaufFilter') return;
+    umlaufFilterD3 = e.target.value;
     recompute();
   });
 
@@ -808,26 +843,32 @@
   els.zoomOutBtn.addEventListener('click', () => setZoom(zoomLevel / ZOOM_STEP));
   els.zoomInBtn.addEventListener('click', () => setZoom(zoomLevel * ZOOM_STEP));
   els.zoomResetBtn.addEventListener('click', () => setZoom(1));
-  els.d3ZoomResetBtn.addEventListener('click', () => diagramD3Api && diagramD3Api.resetZoom());
+  els.d3ZoomOutBtn.addEventListener('click', () => setZoomD3(zoomLevelD3 / ZOOM_STEP));
+  els.d3ZoomInBtn.addEventListener('click', () => setZoomD3(zoomLevelD3 * ZOOM_STEP));
+  els.d3ZoomResetBtn.addEventListener('click', () => setZoomD3(1));
 
   // Strg/Cmd+Mausrad über dem Diagramm zoomt interaktiv in die Zeitachse
   // hinein/heraus (wie in Karten-/Grafikwerkzeugen üblich) - normales
   // Scrollen (ohne Strg) bleibt unverändert das Scrollen/Blättern durch die
   // Historie. Mehrere Wheel-Events pro Geste werden gesammelt und erst im
   // nächsten Frame in EINE Neuberechnung umgesetzt (kein Reflow pro Tick).
-  let zoomPendingDelta = 0, zoomRaf = null;
-  els.diagram.addEventListener('wheel', (e) => {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    zoomPendingDelta += e.deltaY;
-    if (zoomRaf) return;
-    zoomRaf = requestAnimationFrame(() => {
-      const factor = Math.pow(1.0018, -zoomPendingDelta);
-      zoomPendingDelta = 0;
-      zoomRaf = null;
-      setZoom(zoomLevel * factor);
-    });
-  }, { passive: false });
+  function wireWheelZoom(el, getLevel, setLevel) {
+    let pendingDelta = 0, raf = null;
+    el.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      pendingDelta += e.deltaY;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        const factor = Math.pow(1.0018, -pendingDelta);
+        pendingDelta = 0;
+        raf = null;
+        setLevel(getLevel() * factor);
+      });
+    }, { passive: false });
+  }
+  wireWheelZoom(els.diagram, () => zoomLevel, setZoom);
+  wireWheelZoom(els.d3Diagram, () => zoomLevelD3, setZoomD3);
 
   [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput, els.showTimestampInput].forEach(el => el.addEventListener('change', recompute));
 
