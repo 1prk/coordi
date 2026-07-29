@@ -7,13 +7,21 @@
   const intersections = [];
 
   // Rohwert einer DET-Spalte (Kategorie DETEKTOR, OCIT-Typname single_loop):
-  // 0 = frei, 1 = belegt, sonst Belegungsgrad in % (Stufen 1-24...) - für die
-  // Diagramm-Überlagerung reicht die binäre Unterscheidung frei/belegt, ob
-  // die Anlage nur 0/1 oder einen abgestuften Belegungsgrad liefert.
+  // 0 = frei, 1 = belegt, sonst Belegungsgrad in % (Stufen 1-24, 25-49,
+  // 50-74, 75-99, >=100) - für die Diagramm-Überlagerung reicht die binäre
+  // Unterscheidung frei/belegt, unabhängig davon, ob die Anlage nur 0/1
+  // liefert oder einen abgestuften Belegungsgrad. Der Belegungsgrad kann
+  // dabei entweder als Zahl (z. B. Prozentwert oder Stufen-Code) ODER als
+  // Text-Bereich (z. B. "25-49") vorliegen - im zweiten Fall ist der Wert
+  // nicht mit Number() parsbar, gilt aber trotzdem als belegt, solange er
+  // nicht leer/"0"/"INV" ist.
   function categorizeDetRaw(raw) {
-    if (!raw || raw.toUpperCase() === 'INV') return 'UNBEKANNT';
-    const num = Number(raw);
-    return Number.isFinite(num) ? (num > 0 ? 'BELEGT' : 'FREI') : 'UNBEKANNT';
+    const s = String(raw ?? '').trim();
+    if (!s || s.toUpperCase() === 'INV') return 'UNBEKANNT';
+    if (s === '0') return 'FREI';
+    const num = Number(s);
+    if (Number.isFinite(num)) return num > 0 ? 'BELEGT' : 'FREI';
+    return 'BELEGT';
   }
 
   // Baut aus Rohtext (eine CSV-Datei = ein Knoten) einen Zustandseintrag.
@@ -42,7 +50,15 @@
     const detColumns = parsed.otherColumns.filter(c => c.kuerzel === 'DET');
     const detSegsByCol = new Map();
     detColumns.forEach(col => {
-      detSegsByCol.set(col.index, buildSegments(parsed.times, parsed.seriesByCol.get(col.index), categorizeDetRaw));
+      // buildSegments() überspringt Zeilen mit leerem Rohwert stillschweigend
+      // (richtig für SG-Spalten, wo eine leere Zelle "keine neue Messung"
+      // bedeutet) - für DET ist eine leere Zelle laut Spezifikation aber
+      // nicht von "0"/frei unterschieden (anders als bei APW/OEPNV, wo das
+      // ausdrücklich zwei verschiedene Bedeutungen sind). Ohne diese
+      // Umwandlung würde ein belegt-Segment über eine leere Lücke hinweg
+      // fälschlich zusammenlaufen, statt bei "frei" zu enden.
+      const rawSeries = (parsed.seriesByCol.get(col.index) || []).map(v => (v === '' ? '0' : v));
+      detSegsByCol.set(col.index, buildSegments(parsed.times, rawSeries, categorizeDetRaw));
     });
 
     return {
