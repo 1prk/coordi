@@ -10,6 +10,11 @@
   // erlaubt Sprünge zu einem bestimmten Zeitpunkt aus der Umlaufübersicht
   // heraus, ohne dass der Diagramm-Code selbst vom App-Code wissen muss.
   let diagramApi = null;
+  // Dasselbe für den D3-Diagramm-Prototyp (eigener Tab, eigenes Modul
+  // js/diagram-d3.js - siehe dort). Verwaltet Zoom/Pan intern über d3-zoom,
+  // braucht anders als das klassische Diagramm keinen extern getrackten
+  // zoomLevel.
+  let diagramD3Api = null;
 
   // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
   // weiter heraus. Wird als Faktor an renderDiagram gereicht (dort mit der
@@ -35,7 +40,11 @@
     tabLinks: document.querySelectorAll('.nav-tab-link'),
     tabSetup: document.getElementById('tabSetup'),
     tabDiagram: document.getElementById('tabDiagram'),
+    tabD3Diagram: document.getElementById('tabD3Diagram'),
     tabStats: document.getElementById('tabStats'),
+    d3Panel: document.getElementById('d3Panel'),
+    d3Diagram: document.getElementById('d3Diagram'),
+    d3ZoomResetBtn: document.getElementById('d3ZoomResetBtn'),
     btnAddFile: document.getElementById('btnAddFile'),
     fileInput: document.getElementById('fileInput'),
     btnExport: document.getElementById('btnExport'),
@@ -93,10 +102,11 @@
     els.statsPanel.style.display = 'none';
     els.umlaufPanel.style.display = 'none';
     els.kmPanel.style.display = 'none';
+    els.d3Panel.style.display = 'none';
   }
 
-  /* ---------------- Tabs (Setup / Diagramm / Statistik) ---------------- */
-  const TAB_CONTENT = { setup: els.tabSetup, diagram: els.tabDiagram, stats: els.tabStats };
+  /* ---------------- Tabs (Setup / Diagramm / Diagramm (D3) / Statistik) ---------------- */
+  const TAB_CONTENT = { setup: els.tabSetup, diagram: els.tabDiagram, d3diagram: els.tabD3Diagram, stats: els.tabStats };
   function setTab(tab) {
     currentTab = tab;
     Object.keys(TAB_CONTENT).forEach(t => { TAB_CONTENT[t].style.display = t === tab ? '' : 'none'; });
@@ -104,11 +114,11 @@
       if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
-    // Das Diagramm misst beim Rendern die Breite seines Containers - während
-    // der Diagramm-Tab per display:none verborgen ist, liefert das 0 (Fallback
-    // auf eine feste Breite). Ein Wechsel auf diesen Tab macht den Container
-    // erst sichtbar, daher hier neu rendern, damit die volle Breite genutzt wird.
-    if (tab === 'diagram') recompute();
+    // Beide Diagramme messen beim Rendern die Breite ihres Containers -
+    // während ihr Tab per display:none verborgen ist, liefert das 0
+    // (Fallback auf eine feste Breite). Ein Wechsel auf den jeweiligen Tab
+    // macht den Container erst sichtbar, daher hier neu rendern.
+    if (tab === 'diagram' || tab === 'd3diagram') recompute();
   }
   els.tabLinks.forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); setTab(a.dataset.tab); }));
 
@@ -561,6 +571,7 @@
 
     els.kpiPanel.style.display = 'block';
     els.diagramPanel.style.display = 'block';
+    els.d3Panel.style.display = 'block';
     els.tablePanel.style.display = 'block';
     els.kmPanel.style.display = 'block';
 
@@ -622,6 +633,8 @@
     if (resRev.ok) parts.push(`Rück: ${resRev.rows.length} Knoten, l_TP ${Math.round(resRev.lTP)} m`);
     const durH = ((globalTMax - globalTMin) / 3600000).toFixed(1);
     els.diagramInfo.textContent = `${parts.join(' · ')} · gesamte Historie (${durH} h)`;
+
+    diagramD3Api = App.diagramD3.renderDiagram(els.d3Diagram, { TU, showQualitative, showOptimum, showTimestamp, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
 
     /* ---- Koordinationsstatistik ---- */
     renderKm(resHin, resRev);
@@ -795,6 +808,7 @@
   els.zoomOutBtn.addEventListener('click', () => setZoom(zoomLevel / ZOOM_STEP));
   els.zoomInBtn.addEventListener('click', () => setZoom(zoomLevel * ZOOM_STEP));
   els.zoomResetBtn.addEventListener('click', () => setZoom(1));
+  els.d3ZoomResetBtn.addEventListener('click', () => diagramD3Api && diagramD3Api.resetZoom());
 
   // Strg/Cmd+Mausrad über dem Diagramm zoomt interaktiv in die Zeitachse
   // hinein/heraus (wie in Karten-/Grafikwerkzeugen üblich) - normales

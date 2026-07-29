@@ -17,6 +17,7 @@
     </div>
     <a href="#" class="nav-tab-link" data-tab="setup">Setup</a>
     <a href="#" class="nav-tab-link" data-tab="diagram">Diagramm</a>
+    <a href="#" class="nav-tab-link" data-tab="d3diagram">Diagramm (D3)</a>
     <a href="#" class="nav-tab-link" data-tab="stats">Statistik</a>
     <div class="nav-actions">
       <button type="button" class="btn btn-secondary" id="btnExport" title="Aktuelle Einstellungen (Abstände, V_p, Dateinamen usw.) als JSON-Datei speichern - referenziert die CSV-Dateien nur per Dateiname, ohne deren Inhalt">Export</button>
@@ -129,6 +130,33 @@
       </div>
     </div>
 
+    <!-- ============ DIAGRAM TAB (D3-PROTOTYP) ============ -->
+    <div class="tab-content" id="tabD3Diagram" style="display:none;">
+      <div class="card elev-md panel-card" id="d3Panel" style="display:none;">
+        <div class="panel-head">
+          <h3>Zeit-Weg-Diagramm (D3.js-Prototyp)</h3>
+          <span class="zoom-controls">
+            <button type="button" class="btn btn-secondary btn-icon" id="d3ZoomResetBtn" title="Zoom zurücksetzen">⟲</button>
+            <span class="zoom-hint">Mausrad zoomt, Ziehen verschiebt die Zeitachse</span>
+          </span>
+        </div>
+        <div class="legend">
+          <span class="item"><span class="swatch" style="background:var(--sig-green)"></span>Grünlage je Knoten</span>
+          <span class="item"><span class="swatch" style="background:var(--sig-red);height:3px;align-self:center;"></span>Sperrzeit</span>
+          <span class="item"><span class="swatch" style="background:repeating-linear-gradient(90deg,var(--text-faint) 0 3px,transparent 3px 6px);height:2px;align-self:center;"></span>Teilpunkt-Raster</span>
+          <span class="item"><span class="swatch" style="background:#6a3fa0;"></span>Detektor belegt</span>
+          <span class="item"><span style="color:#8a5a00;font-weight:700;font-family:var(--mono);font-size:11px;">H</span> Hinrichtung</span>
+          <span class="item"><span style="color:var(--accent);font-weight:700;font-family:var(--mono);font-size:11px;">R</span> Gegenrichtung</span>
+          <span class="item"><span class="swatch" style="background:repeating-linear-gradient(45deg,rgba(27,94,32,.35) 0 2px,transparent 2px 6px);border:1px solid #1b5e20;"></span>Grünband Querschnitt (H)</span>
+          <span class="item"><span class="swatch" style="background:repeating-linear-gradient(-45deg,rgba(57,255,20,.35) 0 2px,transparent 2px 6px);border:1px solid #39ff14;"></span>Grünband Optimum (H)</span>
+          <span class="item"><span class="swatch" style="background:repeating-linear-gradient(-45deg,rgba(11,61,145,.35) 0 2px,transparent 2px 6px);border:1px solid #0b3d91;"></span>Grünband Querschnitt (R)</span>
+          <span class="item"><span class="swatch" style="background:repeating-linear-gradient(45deg,rgba(0,229,255,.35) 0 2px,transparent 2px 6px);border:1px solid #00e5ff;"></span>Grünband Optimum (R)</span>
+        </div>
+        <div class="diagram-wrap" id="d3Diagram"></div>
+        <div class="panel-note">Experimenteller D3.js-Nachbau desselben Diagramms (siehe Tab „Diagramm") - selbe Berechnung, unabhängige Rendering-Implementierung zum Vergleich. Nur die Zeitachse ist zoom-/verschiebbar (Mausrad/Ziehen), die Weg-Achse bleibt fix.</div>
+      </div>
+    </div>
+
     <!-- ============ STATISTICS TAB ============ -->
     <div class="tab-content" id="tabStats" style="display:none;">
       <div class="card elev-md panel-card" id="kmPanel" style="display:none;">
@@ -200,6 +228,8 @@
 <script src="js/parser.js"></script>
 <script src="js/coordination.js"></script>
 <script src="js/diagram.js"></script>
+<script src="lib/d3.v7.min.js"></script>
+<script src="js/diagram-d3.js"></script>
 <script src="js/state.js"></script>
 <script src="js/app.js"></script>
 </body>
