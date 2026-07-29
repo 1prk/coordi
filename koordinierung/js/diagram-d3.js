@@ -56,7 +56,10 @@
     const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
     const mT = headerH + 8;
     const VIEWPORT_H = 560;
-    const footerH = 36 + Math.max(0, dirs.length - 1) * 26 + 16;
+    // 40px je Richtung statt 26px: Platz für bis zu zwei Namenszeilen (Knoten-
+    // namen mit "/" brechen um, siehe Fußzeile unten) über der Maßketten-Zeile.
+    const FOOTER_ROW_H = 40;
+    const footerH = FOOTER_ROW_H + Math.max(0, dirs.length - 1) * FOOTER_ROW_H + 16;
     const wrapWidth = container.clientWidth || 800;
     const plotW = Math.max(240, wrapWidth - mL - mR - 4);
     const W = mL + plotW + mR;
@@ -133,14 +136,22 @@
     const gFooter = svg.append('g').attr('transform', `translate(0,${mT + VIEWPORT_H})`);
     gFooter.append('rect').attr('x', 0).attr('y', 0).attr('width', W).attr('height', footerH).attr('fill', 'var(--bg-panel)');
     dirs.forEach((d, di) => {
-      const labelY = 18 + di * 26;
+      const labelY = 14 + di * FOOTER_ROW_H;
       d.rows.forEach(r => {
-        gFooter.append('text').attr('x', X(r.station)).attr('y', labelY).attr('text-anchor', 'middle')
-          .attr('font-size', 10).attr('font-weight', 700).attr('fill', d.tagColor).text(`${d.tag} ${r.name}`);
+        // Knotenname bricht bei "/" um (z. B. "Bahnhofstraße/Musterstraße") -
+        // die Richtungs-Kennung (H/R) bleibt auf der ersten Zeile.
+        const x = X(r.station);
+        const parts = String(r.name).split('/');
+        const label = gFooter.append('text').attr('text-anchor', 'middle')
+          .attr('font-size', 10).attr('font-weight', 700).attr('fill', d.tagColor);
+        label.append('tspan').attr('x', x).attr('y', labelY).text(`${d.tag} ${parts[0]}`);
+        for (let pi = 1; pi < parts.length; pi++) {
+          label.append('tspan').attr('x', x).attr('dy', 11).text(parts[pi]);
+        }
       });
     });
     dirs.forEach((d, di) => {
-      const y = 32 + di * 26;
+      const y = 14 + 22 + di * FOOTER_ROW_H;
       const pointRight = d.tag === 'H';
       const ah = 4;
       for (let i = 0; i < d.rows.length - 1; i++) {
@@ -393,6 +404,12 @@
     }
     const zoomBehavior = d3.zoom()
       .scaleExtent([ZOOM_MIN, ZOOM_MAX])
+      // Reines Mausrad soll die Seite normal scrollen können (wie überall
+      // sonst) statt vom Diagramm für Zoom "gekapert" zu werden - nur mit
+      // gedrückter Strg/Cmd-Taste zoomt das Mausrad, exakt wie beim
+      // klassischen Diagramm (dort: Strg+Mausrad). Ziehen (Drag) bleibt
+      // unabhängig davon immer aktiv (linke Maustaste, !event.button).
+      .filter((event) => event.type === 'wheel' ? (event.ctrlKey || event.metaKey) : !event.button)
       .on('zoom', (event) => {
         const clamped = clampY(event.transform);
         if (clamped !== event.transform) { svg.call(zoomBehavior.transform, clamped); return; }
