@@ -725,12 +725,24 @@
   [els.kmFrom1, els.kmTo1, els.kmFrom2, els.kmTo2].forEach(el => el.addEventListener('change', recompute));
 
   /* ---------------- Koordinationsstatistik ---------------- */
-  // "Erfolgreiche" Koordination = das Optimum-Grünband durchläuft den
-  // Umlauf durchgehend (ohne an einer Station zu "stoppen") bis zum
-  // letzten Knoten. Je Übergang wird zusätzlich gezeigt, WO genau Umläufe
-  // ausscheiden (Eintretend/Erfolgreich/Gescheitert je Station), damit sich
-  // Engpässe im Streckenzug lokalisieren lassen - plus Breite (min/Ø/max)
-  // des tatsächlich durchgehenden Bandes.
+  // "Erfolgreiche" Koordination = der reale Umlauf (tatsächliches
+  // Grünfenster am ersten Knoten) erreicht durchgehend Grün bis zum letzten
+  // Knoten - unabhängig davon, ob die dabei real nutzbare Bandbreite so
+  // breit wie der Streckenzug-Engpass (minTf) ist; ein schmaleres, aber
+  // durchgehendes reales Band zählt genauso als Durchfahrt. Je Übergang
+  // wird zusätzlich gezeigt, WO genau Umläufe ausscheiden (Eintretend/
+  // Erfolgreich/Gescheitert je Station), damit sich Engpässe im
+  // Streckenzug lokalisieren lassen - plus Breite (min/Ø/max) des
+  // tatsächlich durchgehenden (realen) Bandes.
+  // Reale Bandbreite (min/Ø/max in Sekunden) der tatsächlich durchgehenden
+  // Umläufe an einem Übergang - kann je Übergang/Umlauf variieren und muss
+  // NICHT der konstanten Engpass-Bandbreite (minTf) entsprechen; siehe
+  // computeOptimumBand()'s realStages-Kette.
+  function fmtRealWidth(st) {
+    if (!st.surviving || st.widthMin == null) return '–';
+    if (st.widthMin === st.widthMax) return `${st.widthMin} s`;
+    return `${st.widthMin}–${st.widthMax} s (Ø ${st.widthAvg.toFixed(1)} s)`;
+  }
   function renderStats(resHin, resRev) {
     const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
       .filter(([, res]) => res.ok && res.optimumBand);
@@ -741,7 +753,7 @@
     const rows = [];
     dirs.forEach(([label, res, color]) => {
       const bw = res.optimumBand.minTf;
-      rows.push(`<tr class="stats-dir-row"><td colspan="6" style="color:${color}">${esc(label)} · Engpass-Bandbreite ${bw} s (konstant)</td></tr>`);
+      rows.push(`<tr class="stats-dir-row"><td colspan="6" style="color:${color}">${esc(label)} · Engpass-Bandbreite (Optimum) ${bw} s (konstant)</td></tr>`);
       res.optimumBand.perStation.forEach(st => {
         rows.push(`<tr>
           <td>${esc(st.a.name)} → ${esc(st.b.name)}</td>
@@ -749,7 +761,7 @@
           <td>${st.surviving}</td>
           <td>${st.failed}</td>
           <td class="${rateCls(st.rate)}">${pct(st.rate)}</td>
-          <td>${st.surviving > 0 ? bw + ' s' : '–'}</td>
+          <td>${fmtRealWidth(st)}</td>
         </tr>`);
       });
       const ov = res.optimumBand.overall;
@@ -760,7 +772,7 @@
         <td>${ov.successCount}</td>
         <td>${ov.failCount}</td>
         <td class="${rateCls(ov.rate)}">${pct(ov.rate)}</td>
-        <td>${ov.successCount > 0 ? bw + ' s' : '–'}</td>
+        <td>${fmtRealWidth({ surviving: ov.successCount, widthMin: ov.widthMin, widthMax: ov.widthMax, widthAvg: ov.widthAvg })}</td>
       </tr>`);
     });
     els.statsBody.innerHTML = rows.join('');
@@ -768,7 +780,9 @@
 
   /* ---------------- Umlaufübersicht ---------------- */
   // Eine Zeile je realem Umlauf (Ursprungsgrünfenster am ersten Knoten) mit
-  // Erfolg/Misserfolg des Optimum-Bands über den ganzen Streckenzug - Klick
+  // Erfolg/Misserfolg der REALEN Durchfahrt über den ganzen Streckenzug
+  // (unabhängig von der konstanten Optimum-Bandbreite, siehe
+  // computeOptimumBand()'s realStages-Kette) - Klick
   // springt im Zeit-Weg-Diagramm direkt zu diesem Zeitpunkt. Umlauf-Nummer =
   // Index innerhalb der (ungefilterten) Zykluskette der jeweiligen Richtung.
   // Der Segment-Filter im Panel-Kopf (Alle/Durchfahrt/Gescheitert) grenzt auf

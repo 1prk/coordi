@@ -137,10 +137,10 @@
   // vorauszusetzen, daher unempfindlich gegenüber realem Zeitversatz/
   // Jitter zwischen den Knoten und gegenüber Planwechseln.
   //
-  // Nebenbei liefert dieselbe Rechnung die Grundlage für die
-  // Koordinationsstatistik: je Knoten, wie viele der am ersten Knoten
-  // gestarteten Startfenster dort noch gültig sind ("erfolgreiche"/
-  // "gescheiterte" Koordination je Station).
+  // Die Koordinationsstatistik (je Knoten, wie viele Umläufe dort noch
+  // "erfolgreich"/"gescheitert" sind) wird NICHT aus dieser minTf-Kette
+  // abgeleitet, sondern aus einer separaten, ungeklammerten Kette weiter
+  // unten (realStages) - siehe deren Kommentar für den Grund.
   function computeOptimumBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
@@ -179,12 +179,56 @@
     }
 
     const finalStage = stages[stages.length - 1];
+
+    // Reale Durchfahrt-Erkennung: dieselbe Verschiebe-und-Schneide-Kette wie
+    // oben für das Optimum-Band, aber OHNE die minTf-Klammerung - hier werden
+    // die tatsächlichen grünen Intervalle jedes Knotens direkt geschnitten.
+    // Die Breite des überlebenden Intervalls darf dabei an jedem Übergang
+    // schrumpfen (auch unter minTf) - "erfolgreich" heißt hier nur noch: am
+    // Ende bleibt ein nicht-leeres reales Grünfenster übrig, unabhängig
+    // davon, ob es so breit wie der Streckenzug-Engpass (minTf) ist.
+    //
+    // Das ist bewusst von der obigen minTf-Kette getrennt: validStartsFor()
+    // verwirft jedes reale Grünvorkommen, das schmaler als minTf ist,
+    // komplett - eine dort real erfolgreiche Durchfahrt mit einem schmaleren
+    // als dem Engpass-Band wäre damit unsichtbar bzw. fälschlich als
+    // "gescheitert" gezählt, nur weil sie nicht die volle Engpassbreite
+    // hätte. Das Optimum-Band bleibt EINE konstante Breite (für die
+    // Bandvisualisierung); diese Kette bildet dagegen die real erlebte
+    // Durchfahrt ab und ist die Grundlage für Koordinationsstatistik,
+    // Umlaufübersicht und Koordinierungsmaß (siehe computeKoordinierungsmass).
+    function realIntervalsFor(node) {
+      return (node.greenSegs || []).map(g => ({ start: g.start, end: g.end, segStart: g.start, segEnd: g.end }));
+    }
+    let realStage = realIntervalsFor(ordered[0]).map((iv, idx) => ({ ...iv, origin: idx }));
+    const realStages = [realStage];
+    for (let i = 1; i < ordered.length; i++) {
+      const dtMs = (tau[i] - tau[i - 1]) * 1000;
+      const shifted = realStage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs, origin: iv.origin }));
+      const nodeReal = realIntervalsFor(ordered[i]);
+      const next = [];
+      shifted.forEach(iv => { intersectIntervalWithList(iv, nodeReal).forEach(r => next.push({ ...r, origin: iv.origin })); });
+      realStages.push(next);
+      realStage = next;
+    }
+    const realFinalStage = realStages[realStages.length - 1];
+    const widthsOf = (list) => list.map(iv => Math.round((iv.end - iv.start) / 1000));
+    const widthStats = (list) => {
+      const w = widthsOf(list);
+      if (!w.length) return { widthMin: null, widthMax: null, widthAvg: null };
+      return {
+        widthMin: Math.min(...w), widthMax: Math.max(...w),
+        widthAvg: w.reduce((a, b) => a + b, 0) / w.length
+      };
+    };
+
     const overall = {
-      totalCycles: stages[0].length,
-      successCount: finalStage.length,
-      failCount: stages[0].length - finalStage.length,
-      rate: stages[0].length ? finalStage.length / stages[0].length : 0,
-      bandwidth: minTf
+      totalCycles: realStages[0].length,
+      successCount: realFinalStage.length,
+      failCount: realStages[0].length - realFinalStage.length,
+      rate: realStages[0].length ? realFinalStage.length / realStages[0].length : 0,
+      bandwidth: minTf,
+      ...widthStats(realFinalStage)
     };
 
     // Nur Zyklen zeichnen, die den GESAMTEN Streckenzug bis zum letzten
@@ -256,11 +300,12 @@
 
       segments.push({ a: ordered[i - 1], b: ordered[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
 
-      const entering = stages[i - 1].length, surviving = stages[i].length;
+      const entering = realStages[i - 1].length, surviving = realStages[i].length;
       perStation.push({
         a: ordered[i - 1], b: ordered[i],
         entering, surviving, failed: entering - surviving,
-        rate: entering ? surviving / entering : 0
+        rate: entering ? surviving / entering : 0,
+        ...widthStats(realStages[i])
       });
     }
 
@@ -274,19 +319,21 @@
     // passiert wurden - 0, wenn schon der erste Folgeknoten nicht erreicht
     // wurde, bis maximal stages.length - 1 (= ordered.length - 1) bei
     // vollständiger Durchfahrt.
-    const cycles = stages[0].map(start0 => {
+    const cycles = realStages[0].map(start0 => {
       let survivedIdx = 0;
-      for (let s = 1; s < stages.length; s++) {
-        const found = stages[s].find(iv => iv.origin === start0.origin);
+      let lastIv = start0;
+      for (let s = 1; s < realStages.length; s++) {
+        const found = realStages[s].find(iv => iv.origin === start0.origin);
         if (!found) break;
         survivedIdx = s;
+        lastIv = found;
       }
-      const success = survivedIdx === stages.length - 1;
+      const success = survivedIdx === realStages.length - 1;
       return {
         start: start0.segStart, end: start0.segEnd,
         success,
         failedAt: success ? null : ordered[survivedIdx + 1],
-        finalWidth: success ? minTf : null,
+        finalWidth: success ? Math.round((lastIv.end - lastIv.start) / 1000) : null,
         durchfahrten: survivedIdx
       };
     });
