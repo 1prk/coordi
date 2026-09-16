@@ -30,6 +30,7 @@
   };
   const DET_COLOR = '#6a3fa0';
   const APW_COLOR = '#b5670a';
+  const TRACK_LANE_STEP = 11;
 
   function renderDiagram(container, o) {
     const d3 = window.d3;
@@ -200,10 +201,18 @@
           }
         });
         // DET und APW identisch gezeichnet (siehe diagram.js für die
-        // Begründung) - nur Farbe und "0"-Schraffur unterscheiden sie.
+        // Begründung) - nur Farbe und "0"-Schraffur unterscheiden sie. Kein
+        // dauerhaftes Namens-Label (siehe diagram.js) - stattdessen eine
+        // dünne Führungslinie über die volle Aufzeichnungsdauer, deren Name
+        // sich per Hover erschließt; eine breite unsichtbare Linie darunter
+        // vergrößert die Trefferfläche.
         (r.tracks || []).forEach((tr, di) => {
-          const xd = x + 18 + di * 7;
+          const xd = x + 18 + di * TRACK_LANE_STEP;
           const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
+          const yTopRow = Y(Math.min(r.tMax, globalTMax)), yBotRow = Y(Math.max(r.tMin, globalTMin));
+          const lineTitle = `<title>${esc(tr.name)} (${d.tag} ${esc(r.name)})</title>`;
+          overlay += `<line x1="${xd.toFixed(1)}" y1="${yTopRow.toFixed(1)}" x2="${xd.toFixed(1)}" y2="${yBotRow.toFixed(1)}" stroke="transparent" stroke-width="10">${lineTitle}</line>`;
+          overlay += `<line x1="${xd.toFixed(1)}" y1="${yTopRow.toFixed(1)}" x2="${xd.toFixed(1)}" y2="${yBotRow.toFixed(1)}" stroke="${color}" stroke-width="1" opacity="0.35" pointer-events="none"/>`;
           tr.segs.forEach(seg => {
             const ys = Y(seg.end), ye = Y(seg.start);
             if (ye < mT || ys > mT + plotH) return;
@@ -228,13 +237,11 @@
     container.innerHTML = '';
     const root = d3.select(container);
 
-    const sgRowsH = 20 + Math.max(0, dirs.length - 1) * 15;
-    const hasAnyTracks = dirs.some(d => d.rows.some(r => (r.tracks || []).length > 0));
-    const trackRowTop = 6 + Math.max(0, dirs.length - 1) * 15 + 15;
-    // Track-Label sind schmaler als der Spurabstand (7px) - siehe diagram.js
-    // - daher auf 2 Zeilen im Wechsel gestaffelt statt in einer Zeile.
-    const TRACK_LABEL_ROWS = 2;
-    const headerH = sgRowsH + (hasAnyTracks ? 12 * TRACK_LABEL_ROWS + 1 : 0);
+    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung. Bewusst
+    // KEIN eigenes Label je Det/APW-Spur hier (siehe diagram.js) - die
+    // Führungslinie plus ihre breite Hover-Trefferfläche übernehmen die
+    // Identifikation.
+    const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
     const header = root.append('div').attr('class', 'diagram-sticky-header')
       .style('width', W + 'px').style('height', headerH + 'px');
     dirs.forEach((d, di) => {
@@ -244,24 +251,6 @@
           .text(`${d.tag} ${r.sgName}`);
       });
     });
-    // Track-Kürzel (DET/APW) je Spur an ihrer Spurposition - siehe
-    // diagram.js für die Begründung (Sichtbarkeit/Erklärbarkeit).
-    if (hasAnyTracks) {
-      dirs.forEach(d => {
-        d.rows.forEach(r => {
-          const x = X(r.station);
-          (r.tracks || []).forEach((tr, di) => {
-            const xd = x + 18 + di * 7;
-            const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
-            const top = trackRowTop + (di % TRACK_LABEL_ROWS) * 12;
-            header.append('span').attr('class', 'diagram-track-label')
-              .style('left', xd.toFixed(1) + 'px').style('top', top + 'px').style('color', color)
-              .attr('title', `${tr.name} (${d.tag} ${r.name})`)
-              .text(tr.kind);
-          });
-        });
-      });
-    }
 
     const svg = root.append('svg').attr('width', W).attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
       .attr('font-family', 'Consolas, ui-monospace, monospace').html(svgInner);

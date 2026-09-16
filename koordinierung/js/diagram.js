@@ -20,6 +20,7 @@
   // Wert-Label je Segment - eigene Farbe, damit beide auch ohne Legende
   // unterscheidbar sind.
   const DET_COLOR = '#6a3fa0';
+  const TRACK_LANE_STEP = 11;
   const APW_COLOR = '#b5670a';
 
   // Rasterschritt als (nette) Bruchteil der Umlaufzeit TU - so landen die
@@ -274,17 +275,25 @@
         // bei x+6), DET und APW identisch gezeichnet (Balken über die reale
         // Dauer je Wert-Segment, mit dem Wert als Label) - nur die Farbe und
         // die "0"-Schraffur unterscheiden sie, siehe pushRow-Filterung in
-        // app.js. Welche Spur was ist, steht zusätzlich fest in der
-        // Sticky-Kopfzeile (siehe header weiter unten), nicht erst beim
-        // Hovern - direkt aufeinanderfolgende, einzeln zu kurze Segmente
+        // app.js. Bewusst KEIN dauerhaftes Namens-Label (weder in der
+        // Kopfzeile noch gedreht) - stattdessen eine dünne, durchgehende
+        // Führungslinie über die volle Aufzeichnungsdauer dieser Zeile (auch
+        // dort, wo gerade kein Segment liegt), deren Name/Richtung sich per
+        // Hover/Title erschließt; eine breitere unsichtbare Linie darunter
+        // vergrößert die Trefferfläche, ohne die sichtbare Linie dick wirken
+        // zu lassen. Direkt aufeinanderfolgende, einzeln zu kurze Segmente
         // (z. B. ein schnell tickender Countdown) verschmelzen bei diesem
         // Zoom bewusst zu einem durchgehenden Balken statt beschriftete
         // Segmente zu erzwingen, die sich sonst gegenseitig überlappen
         // würden - der Wert jedes einzelnen Segments bleibt per Tooltip
         // abrufbar, ein Reinzoomen zeigt die Beschriftung wieder direkt.
         (r.tracks || []).forEach((tr, di) => {
-          const xd = x + 18 + di * 7;
+          const xd = x + 18 + di * TRACK_LANE_STEP;
           const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
+          const yTopRow = Y(Math.min(r.tMax, globalTMax)), yBotRow = Y(Math.max(r.tMin, globalTMin));
+          const lineTitle = `<title>${esc(tr.name)} (${d.tag} ${esc(r.name)})</title>`;
+          overlay += `<line x1="${xd.toFixed(1)}" y1="${yTopRow.toFixed(1)}" x2="${xd.toFixed(1)}" y2="${yBotRow.toFixed(1)}" stroke="transparent" stroke-width="10">${lineTitle}</line>`;
+          overlay += `<line x1="${xd.toFixed(1)}" y1="${yTopRow.toFixed(1)}" x2="${xd.toFixed(1)}" y2="${yBotRow.toFixed(1)}" stroke="${color}" stroke-width="1" opacity="0.35" pointer-events="none"/>`;
           tr.segs.forEach(seg => {
             const ys = Y(seg.end), ye = Y(seg.start);
             if (ye < mT || ys > mT + plotH) return;
@@ -307,20 +316,12 @@
 
     svg += `</svg>`;
 
-    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung, plus -
-    // falls vorhanden - einer Zeile mit Kürzel je zugeordneter Det/APW-Spur
-    // an ihrer jeweiligen Spurposition (xd, siehe Track-Zeichnung oben).
-    // Bleibt beim Scrollen sichtbar, damit erkennbar ist, was eine Spur IST
-    // (Name/Art), ohne jedes einzelne Segment anhovern zu müssen.
-    const sgRowsH = 20 + Math.max(0, dirs.length - 1) * 15;
-    const hasAnyTracks = dirs.some(d => d.rows.some(r => (r.tracks || []).length > 0));
-    const trackRowTop = 6 + Math.max(0, dirs.length - 1) * 15 + 15;
-    // Track-Label sind schmaler als der Spurabstand (7px), zwei nebeneinander
-    // würden zu unlesbarem Buchstabensalat verschmelzen - daher auf 2 Zeilen
-    // im Wechsel gestaffelt (gerader/ungerader Spurindex), statt sie alle in
-    // einer Zeile zu erzwingen.
-    const TRACK_LABEL_ROWS = 2;
-    const headerH = sgRowsH + (hasAnyTracks ? 12 * TRACK_LABEL_ROWS + 1 : 0);
+    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung. Bewusst
+    // KEIN eigenes Label je Det/APW-Spur hier (siehe Track-Zeichnung oben) -
+    // die Führungslinie plus ihre breite Hover-Trefferfläche übernehmen die
+    // Identifikation, ohne die Kopfzeile mit wachsender Spurzahl breiter/
+    // höher werden zu lassen.
+    const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
     let header = `<div class="diagram-sticky-header" style="width:${W}px;height:${headerH}px;">`;
     dirs.forEach((d, di) => {
       d.rows.forEach(r => {
@@ -328,19 +329,6 @@
         header += `<span class="diagram-sg-label" style="left:${x.toFixed(1)}px;top:${2 + di * 15}px;color:${d.tagColor}">${d.tag} ${esc(r.sgName)}</span>`;
       });
     });
-    if (hasAnyTracks) {
-      dirs.forEach(d => {
-        d.rows.forEach(r => {
-          const x = X(r.station);
-          (r.tracks || []).forEach((tr, di) => {
-            const xd = x + 18 + di * 7;
-            const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
-            const top = trackRowTop + (di % TRACK_LABEL_ROWS) * 12;
-            header += `<span class="diagram-track-label" style="left:${xd.toFixed(1)}px;top:${top}px;color:${color}" title="${esc(tr.name)} (${d.tag} ${esc(r.name)})">${tr.kind}</span>`;
-          });
-        });
-      });
-    }
     header += `</div>`;
 
     // Sticky Fußzeile (x-Achse): Knotennamen + Maßketten (Abschnittsabstand,

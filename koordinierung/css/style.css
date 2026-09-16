@@ -154,7 +154,6 @@ html, body { margin: 0; padding: 0; }
   background: var(--bg-panel); border-bottom: 1px solid var(--border); box-shadow: 0 1px 0 var(--border);
 }
 .diagram-sg-label { position: absolute; transform: translateX(-50%); white-space: nowrap; font-family: var(--font-body); font-size: 10px; font-weight: 800; }
-.diagram-track-label { position: absolute; transform: translateX(-50%); white-space: nowrap; font-family: var(--mono); font-size: 8.5px; font-weight: 700; }
 .diagram-sticky-footer { position: sticky; bottom: 0; left: 0; z-index: 4; background: var(--bg-panel); border-top: 1px solid var(--border); box-shadow: 0 -1px 0 var(--border); }
 .diagram-sticky-footer svg { display: block; margin-top: 0; }
 .diagram-tooltip {
