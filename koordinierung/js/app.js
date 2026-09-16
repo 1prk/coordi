@@ -527,18 +527,20 @@
       const colInfo = n.columns.find(c => c.index === col);
       // Det/APW dieser Signalgruppe (siehe renderNodeList/trackPickerHtml) -
       // strikt 1:1 zugeordnet (node.assignedTracks), daher hier direktionsgenau
-      // gefiltert statt wie früher pauschal für den ganzen Knoten. DET liefert
-      // weiterhin nur die belegt-Segmente (Balken); APW liefert JEDES
-      // Wert-Segment außer "INV" (jeder Wert ist bedeutungstragend, siehe
-      // state.js categorizeApwRaw) - Kind bleibt am Track dran, damit die
-      // Diagramme DET (Balken) und APW (Balken mit Wert-Label) unterschiedlich
-      // zeichnen können.
+      // gefiltert statt wie früher pauschal für den ganzen Knoten. DET und APW
+      // liefern beide JEDES Wert-Segment außer "INV" (siehe state.js
+      // categorizeValueRaw) und werden im Diagramm identisch als Balken mit
+      // Wert-Label gezeichnet - DET blendet zusätzlich "0" (frei) komplett
+      // aus, sonst würde die weit überwiegende Frei-Grundlast das Diagramm
+      // zupflastern; APW zeigt "0" (laut Spezifikation ein Sonderfall,
+      // nicht "kein Wert") weiterhin, nur schraffiert statt Vollton. Kind
+      // bleibt am Track dran, nur für Farbe/diese eine Ausnahme.
       const assignedIdxs = Object.keys(n.assignedTracks || {})
         .map(Number)
         .filter(idx => n.assignedTracks[idx] === trackKey);
       const tracks = assignedIdxs.map(idx => {
         const detInfo = (n.detColumns || []).find(c => c.index === idx);
-        if (detInfo) return { kind: 'DET', name: detInfo.name, segs: (n.detSegsByCol.get(idx) || []).filter(s => s.cat === 'BELEGT') };
+        if (detInfo) return { kind: 'DET', name: detInfo.name, segs: (n.detSegsByCol.get(idx) || []).filter(s => s.cat !== '0' && s.cat !== 'INV') };
         const apwInfo = (n.apwColumns || []).find(c => c.index === idx);
         if (apwInfo) return { kind: 'APW', name: apwInfo.name, segs: (n.apwSegsByCol.get(idx) || []).filter(s => s.cat !== 'INV') };
         return null;

@@ -199,27 +199,21 @@
             overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ys - 2).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${ab}</text>`;
           }
         });
+        // DET und APW identisch gezeichnet (siehe diagram.js für die
+        // Begründung) - nur Farbe und "0"-Schraffur unterscheiden sie.
         (r.tracks || []).forEach((tr, di) => {
           const xd = x + 18 + di * 7;
-          if (tr.kind === 'DET') {
-            tr.segs.forEach(seg => {
-              const ys = Y(seg.end), ye = Y(seg.start);
-              if (ye < mT || ys > mT + plotH) return;
-              const h = Math.max(1, ye - ys);
-              overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="${DET_COLOR}"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): belegt ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
-            });
-          } else if (tr.kind === 'APW') {
-            tr.segs.forEach(seg => {
-              const ys = Y(seg.end), ye = Y(seg.start);
-              if (ye < mT || ys > mT + plotH) return;
-              const h = Math.max(1, ye - ys);
-              const fill = seg.cat === '0' ? apwZeroPattern.url : APW_COLOR;
-              overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="${fill}"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): ${esc(seg.cat)} (${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)})</title></rect>`;
-              if (h >= 13) {
-                overlay += `<text x="${xd.toFixed(1)}" y="${(ys + h / 2 + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#fff" font-weight="700">${esc(seg.cat)}</text>`;
-              }
-            });
-          }
+          const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
+          tr.segs.forEach(seg => {
+            const ys = Y(seg.end), ye = Y(seg.start);
+            if (ye < mT || ys > mT + plotH) return;
+            const h = Math.max(1, ye - ys);
+            const fill = seg.cat === '0' ? apwZeroPattern.url : color;
+            overlay += `<rect x="${(xd - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${h.toFixed(1)}" fill="${fill}" stroke="#fff" stroke-width="0.6"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): ${esc(seg.cat)} (${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)})</title></rect>`;
+            if (h >= 9) {
+              overlay += `<text x="${xd.toFixed(1)}" y="${(ys + h / 2 + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#fff" font-weight="700" paint-order="stroke" stroke="${color}" stroke-width="2.5">${esc(seg.cat)}</text>`;
+            }
+          });
         });
         svgInner += `<g clip-path="${clip}">${overlay}</g>`;
       });
@@ -234,7 +228,13 @@
     container.innerHTML = '';
     const root = d3.select(container);
 
-    const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
+    const sgRowsH = 20 + Math.max(0, dirs.length - 1) * 15;
+    const hasAnyTracks = dirs.some(d => d.rows.some(r => (r.tracks || []).length > 0));
+    const trackRowTop = 6 + Math.max(0, dirs.length - 1) * 15 + 15;
+    // Track-Label sind schmaler als der Spurabstand (7px) - siehe diagram.js
+    // - daher auf 2 Zeilen im Wechsel gestaffelt statt in einer Zeile.
+    const TRACK_LABEL_ROWS = 2;
+    const headerH = sgRowsH + (hasAnyTracks ? 12 * TRACK_LABEL_ROWS + 1 : 0);
     const header = root.append('div').attr('class', 'diagram-sticky-header')
       .style('width', W + 'px').style('height', headerH + 'px');
     dirs.forEach((d, di) => {
@@ -244,6 +244,24 @@
           .text(`${d.tag} ${r.sgName}`);
       });
     });
+    // Track-Kürzel (DET/APW) je Spur an ihrer Spurposition - siehe
+    // diagram.js für die Begründung (Sichtbarkeit/Erklärbarkeit).
+    if (hasAnyTracks) {
+      dirs.forEach(d => {
+        d.rows.forEach(r => {
+          const x = X(r.station);
+          (r.tracks || []).forEach((tr, di) => {
+            const xd = x + 18 + di * 7;
+            const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
+            const top = trackRowTop + (di % TRACK_LABEL_ROWS) * 12;
+            header.append('span').attr('class', 'diagram-track-label')
+              .style('left', xd.toFixed(1) + 'px').style('top', top + 'px').style('color', color)
+              .attr('title', `${tr.name} (${d.tag} ${r.name})`)
+              .text(tr.kind);
+          });
+        });
+      });
+    }
 
     const svg = root.append('svg').attr('width', W).attr('height', H).attr('viewBox', `0 0 ${W} ${H}`)
       .attr('font-family', 'Consolas, ui-monospace, monospace').html(svgInner);

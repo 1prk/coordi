@@ -271,31 +271,30 @@
         // Zugeordnete Det/APW-Spuren dieser Signalgruppe (siehe Setup-Tab,
         // "+ Det/APW hinzufügen" je Richtung): je Spur eine eigene schmale
         // Spur rechts neben der Knotenlinie (jenseits der An/Ab-Beschriftung
-        // bei x+6) - DET als belegt-Balken (Vergleich "Anforderung/Belegung
-        // kurz vor/während der Freigabe" gegen die Grünzeit), APW als Balken
-        // mit dem jeweiligen Wert als Label (ausgeblendet, wenn das Segment
-        // dafür zu kurz ist - der Wert bleibt im Tooltip abrufbar).
+        // bei x+6), DET und APW identisch gezeichnet (Balken über die reale
+        // Dauer je Wert-Segment, mit dem Wert als Label) - nur die Farbe und
+        // die "0"-Schraffur unterscheiden sie, siehe pushRow-Filterung in
+        // app.js. Welche Spur was ist, steht zusätzlich fest in der
+        // Sticky-Kopfzeile (siehe header weiter unten), nicht erst beim
+        // Hovern - direkt aufeinanderfolgende, einzeln zu kurze Segmente
+        // (z. B. ein schnell tickender Countdown) verschmelzen bei diesem
+        // Zoom bewusst zu einem durchgehenden Balken statt beschriftete
+        // Segmente zu erzwingen, die sich sonst gegenseitig überlappen
+        // würden - der Wert jedes einzelnen Segments bleibt per Tooltip
+        // abrufbar, ein Reinzoomen zeigt die Beschriftung wieder direkt.
         (r.tracks || []).forEach((tr, di) => {
           const xd = x + 18 + di * 7;
-          if (tr.kind === 'DET') {
-            tr.segs.forEach(seg => {
-              const ys = Y(seg.end), ye = Y(seg.start);
-              if (ye < mT || ys > mT + plotH) return;
-              const h = Math.max(1, ye - ys);
-              overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="${DET_COLOR}"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): belegt ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
-            });
-          } else if (tr.kind === 'APW') {
-            tr.segs.forEach(seg => {
-              const ys = Y(seg.end), ye = Y(seg.start);
-              if (ye < mT || ys > mT + plotH) return;
-              const h = Math.max(1, ye - ys);
-              const fill = seg.cat === '0' ? apwZeroPattern.url : APW_COLOR;
-              overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="${fill}"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): ${esc(seg.cat)} (${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)})</title></rect>`;
-              if (h >= 13) {
-                overlay += `<text x="${xd.toFixed(1)}" y="${(ys + h / 2 + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#fff" font-weight="700">${esc(seg.cat)}</text>`;
-              }
-            });
-          }
+          const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
+          tr.segs.forEach(seg => {
+            const ys = Y(seg.end), ye = Y(seg.start);
+            if (ye < mT || ys > mT + plotH) return;
+            const h = Math.max(1, ye - ys);
+            const fill = seg.cat === '0' ? apwZeroPattern.url : color;
+            overlay += `<rect x="${(xd - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${h.toFixed(1)}" fill="${fill}" stroke="#fff" stroke-width="0.6"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): ${esc(seg.cat)} (${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)})</title></rect>`;
+            if (h >= 9) {
+              overlay += `<text x="${xd.toFixed(1)}" y="${(ys + h / 2 + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#fff" font-weight="700" paint-order="stroke" stroke="${color}" stroke-width="2.5">${esc(seg.cat)}</text>`;
+            }
+          });
         });
         svg += `<g clip-path="${clip}">${overlay}</g>`;
       });
@@ -308,8 +307,20 @@
 
     svg += `</svg>`;
 
-    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung.
-    const headerH = 20 + Math.max(0, dirs.length - 1) * 15;
+    // Sticky Kopfzeile mit Signalgruppennamen je Knoten/Richtung, plus -
+    // falls vorhanden - einer Zeile mit Kürzel je zugeordneter Det/APW-Spur
+    // an ihrer jeweiligen Spurposition (xd, siehe Track-Zeichnung oben).
+    // Bleibt beim Scrollen sichtbar, damit erkennbar ist, was eine Spur IST
+    // (Name/Art), ohne jedes einzelne Segment anhovern zu müssen.
+    const sgRowsH = 20 + Math.max(0, dirs.length - 1) * 15;
+    const hasAnyTracks = dirs.some(d => d.rows.some(r => (r.tracks || []).length > 0));
+    const trackRowTop = 6 + Math.max(0, dirs.length - 1) * 15 + 15;
+    // Track-Label sind schmaler als der Spurabstand (7px), zwei nebeneinander
+    // würden zu unlesbarem Buchstabensalat verschmelzen - daher auf 2 Zeilen
+    // im Wechsel gestaffelt (gerader/ungerader Spurindex), statt sie alle in
+    // einer Zeile zu erzwingen.
+    const TRACK_LABEL_ROWS = 2;
+    const headerH = sgRowsH + (hasAnyTracks ? 12 * TRACK_LABEL_ROWS + 1 : 0);
     let header = `<div class="diagram-sticky-header" style="width:${W}px;height:${headerH}px;">`;
     dirs.forEach((d, di) => {
       d.rows.forEach(r => {
@@ -317,6 +328,19 @@
         header += `<span class="diagram-sg-label" style="left:${x.toFixed(1)}px;top:${2 + di * 15}px;color:${d.tagColor}">${d.tag} ${esc(r.sgName)}</span>`;
       });
     });
+    if (hasAnyTracks) {
+      dirs.forEach(d => {
+        d.rows.forEach(r => {
+          const x = X(r.station);
+          (r.tracks || []).forEach((tr, di) => {
+            const xd = x + 18 + di * 7;
+            const color = tr.kind === 'DET' ? DET_COLOR : APW_COLOR;
+            const top = trackRowTop + (di % TRACK_LABEL_ROWS) * 12;
+            header += `<span class="diagram-track-label" style="left:${xd.toFixed(1)}px;top:${top}px;color:${color}" title="${esc(tr.name)} (${d.tag} ${esc(r.name)})">${tr.kind}</span>`;
+          });
+        });
+      });
+    }
     header += `</div>`;
 
     // Sticky Fußzeile (x-Achse): Knotennamen + Maßketten (Abschnittsabstand,
