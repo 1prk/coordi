@@ -181,11 +181,25 @@
     }
     const realFinalStage = realStages[realStages.length - 1];
     const widthsOf = (list) => list.map(iv => Math.round((iv.end - iv.start) / 1000));
+    // 5-Zahlen-Zusammenfassung (min/Q1/Median/Q3/max) + Mittelwert der real
+    // durchgehenden Breiten einer Stufe - Grundlage für den Mini-Boxplot in
+    // der Koordinationsstatistik (siehe app.js renderStats). Lineare
+    // Interpolation zwischen den beiden umgebenden Werten (wie
+    // numpy/Excel PERCENTILE.INC) - für eine "Mini"-Visualisierung reicht
+    // das, ohne eigene Ausreißer-Regel (kein Fence/Whisker-Cutoff nötig,
+    // die Whisker reichen bewusst bis min/max).
+    function quantile(sorted, q) {
+      const pos = (sorted.length - 1) * q;
+      const base = Math.floor(pos), rest = pos - base;
+      return sorted[base + 1] !== undefined ? sorted[base] + rest * (sorted[base + 1] - sorted[base]) : sorted[base];
+    }
     const widthStats = (list) => {
-      const w = widthsOf(list);
-      if (!w.length) return { widthMin: null, widthMax: null, widthAvg: null };
+      const w = widthsOf(list).sort((a, b) => a - b);
+      if (!w.length) return { n: 0, widthMin: null, widthQ1: null, widthMedian: null, widthQ3: null, widthMax: null, widthAvg: null };
       return {
-        widthMin: Math.min(...w), widthMax: Math.max(...w),
+        n: w.length,
+        widthMin: w[0], widthMax: w[w.length - 1],
+        widthQ1: quantile(w, 0.25), widthMedian: quantile(w, 0.5), widthQ3: quantile(w, 0.75),
         widthAvg: w.reduce((a, b) => a + b, 0) / w.length
       };
     };
@@ -276,22 +290,32 @@
     // passiert wurden - 0, wenn schon der erste Folgeknoten nicht erreicht
     // wurde, bis maximal realStages.length - 1 (= ordered.length - 1) bei
     // vollständiger Durchfahrt.
+    // stations: je Umlauf UND je Folgeknoten (nicht nur der Gesamtausgang)
+    // erreicht/Breite - Grundlage für den "je LSA"-Export der
+    // Umlaufübersicht (siehe app.js exportUmlaufXlsx). Einmal durch alle
+    // Stufen gelaufen (kein Abbruch bei der ersten gescheiterten Station),
+    // da spätere Stufen für einen dort bereits ausgeschiedenen Umlauf
+    // ohnehin nie einen Treffer enthalten (realStages führt nur Origins
+    // fort, die die vorherige Stufe überlebt haben) - .find() liefert dort
+    // also von selbst "nicht erreicht".
     const cycles = realStages[0].map(start0 => {
       let survivedIdx = 0;
-      let lastIv = start0;
+      let lastWidth = null;
+      const stations = [];
       for (let s = 1; s < realStages.length; s++) {
         const found = realStages[s].find(iv => iv.origin === start0.origin);
-        if (!found) break;
-        survivedIdx = s;
-        lastIv = found;
+        const width = found ? Math.round((found.end - found.start) / 1000) : null;
+        stations.push({ node: ordered[s], reached: !!found, width });
+        if (found) { survivedIdx = s; lastWidth = width; }
       }
       const success = survivedIdx === realStages.length - 1;
       return {
         start: start0.segStart, end: start0.segEnd,
         success,
         failedAt: success ? null : ordered[survivedIdx + 1],
-        finalWidth: success ? Math.round((lastIv.end - lastIv.start) / 1000) : null,
-        durchfahrten: survivedIdx
+        finalWidth: success ? lastWidth : null,
+        durchfahrten: survivedIdx,
+        stations
       };
     });
 

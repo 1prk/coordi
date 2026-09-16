@@ -17,6 +17,12 @@
   // zu diagramApi statt einer d3-zoom-eigenen Lösung.
   let diagramD3Api = null;
 
+  // Letztes recompute()-Ergebnis je Richtung - für die XLSX-Exportbuttons
+  // (Umlaufübersicht/Koordinationsstatistik), die außerhalb von recompute()
+  // ausgelöst werden und daher keinen Zugriff auf dessen lokale resHin/
+  // resRev hätten.
+  let lastResHin = null, lastResRev = null;
+
   // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
   // weiter heraus. Wird als Faktor an renderDiagram gereicht (dort mit der
   // Basis-Pixel/Sekunde-Rate multipliziert) - Wert bleibt über Neu-Rendern
@@ -90,9 +96,12 @@
     kmResult2: document.getElementById('kmResult2'),
     statsPanel: document.getElementById('statsPanel'),
     statsBody: document.getElementById('statsBody'),
+    btnExportStats: document.getElementById('btnExportStats'),
     umlaufPanel: document.getElementById('umlaufPanel'),
     umlaufBody: document.getElementById('umlaufBody'),
     umlaufFilterSeg: document.getElementById('umlaufFilterSeg'),
+    btnExportUmlauf: document.getElementById('btnExportUmlauf'),
+    d3BtnExportUmlauf: document.getElementById('d3BtnExportUmlauf'),
     zoomOutBtn: document.getElementById('zoomOutBtn'),
     zoomResetBtn: document.getElementById('zoomResetBtn'),
     zoomInBtn: document.getElementById('zoomInBtn'),
@@ -549,13 +558,14 @@
   }
 
   function recompute() {
-    if (state.intersections.length === 0) { hidePanels(); showHint(''); return; }
+    if (state.intersections.length === 0) { hidePanels(); showHint(''); lastResHin = null; lastResRev = null; return; }
 
     const dirMode = els.dirSelect.value;
     const hinEnabled = dirMode !== 'rev';
     const revEnabled = dirMode !== 'fwd';
     const resHin = computeDirection('Hin', 'fwd', hinEnabled);
     const resRev = computeDirection('Rev', 'rev', revEnabled);
+    lastResHin = resHin; lastResRev = resRev;
 
     const msgs = [];
 
@@ -734,16 +744,33 @@
   // durchgehendes reales Band zählt genauso als Durchfahrt. Je Übergang
   // wird zusätzlich gezeigt, WO genau Umläufe ausscheiden (Eintretend/
   // Erfolgreich/Gescheitert je Station), damit sich Engpässe im
-  // Streckenzug lokalisieren lassen - plus Breite (min/Ø/max) des
-  // tatsächlich durchgehenden (realen) Bandes.
-  // Reale Bandbreite (min/Ø/max in Sekunden) der tatsächlich durchgehenden
-  // Umläufe an einem Übergang - kann je Übergang/Umlauf variieren und muss
-  // NICHT der konstanten Engpass-Bandbreite (minTf) entsprechen; siehe
-  // computeOptimumBand()'s realStages-Kette.
-  function fmtRealWidth(st) {
-    if (!st.surviving || st.widthMin == null) return '–';
-    if (st.widthMin === st.widthMax) return `${st.widthMin} s`;
-    return `${st.widthMin}–${st.widthMax} s (Ø ${st.widthAvg.toFixed(1)} s)`;
+  // Streckenzug lokalisieren lassen - plus die Bandbreite als Mini-Boxplot
+  // (siehe svgBoxplot()) der tatsächlich durchgehenden (realen) Umläufe.
+  //
+  // svgBoxplot: Whisker min–max, Box Q1–Q3, Strich bei Median - kann je
+  // Übergang/Umlauf streuen und muss NICHT der konstanten Engpass-
+  // Bandbreite (minTf) entsprechen; siehe computeOptimumBand()'s
+  // realStages-Kette/widthStats(). Bewusst schlank gehalten: nur min/max
+  // als sichtbare Zahlen, der Rest (Q1/Median/Q3/Ø/n) steckt im Tooltip
+  // statt die Zelle zuzupflastern. Ohne Streuung (n<2 oder min===max)
+  // genügt reiner Text.
+  function svgBoxplot(st) {
+    if (!st || !st.n) return '–';
+    if (st.n < 2 || st.widthMin === st.widthMax) return `${st.widthMin} s`;
+    const plotW = 60, h = 14, padSide = 13, w = plotW + padSide * 2;
+    const x = (v) => padSide + (v - st.widthMin) / (st.widthMax - st.widthMin) * plotW;
+    const midY = h / 2, boxH = 8, capH = 4;
+    const xMin = x(st.widthMin), xMax = x(st.widthMax), xQ1 = x(st.widthQ1), xQ3 = x(st.widthQ3), xMed = x(st.widthMedian);
+    const title = `min ${st.widthMin} s · Q1 ${st.widthQ1.toFixed(1)} s · Median ${st.widthMedian.toFixed(1)} s · Q3 ${st.widthQ3.toFixed(1)} s · max ${st.widthMax} s · Ø ${st.widthAvg.toFixed(1)} s · n=${st.n}`;
+    return `<svg class="boxplot" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><title>${esc(title)}</title>` +
+      `<text x="0" y="${midY + 3}" font-size="8">${st.widthMin}</text>` +
+      `<line x1="${xMin.toFixed(1)}" y1="${midY}" x2="${xMax.toFixed(1)}" y2="${midY}" stroke="currentColor"/>` +
+      `<line x1="${xMin.toFixed(1)}" y1="${(midY - capH / 2).toFixed(1)}" x2="${xMin.toFixed(1)}" y2="${(midY + capH / 2).toFixed(1)}" stroke="currentColor"/>` +
+      `<line x1="${xMax.toFixed(1)}" y1="${(midY - capH / 2).toFixed(1)}" x2="${xMax.toFixed(1)}" y2="${(midY + capH / 2).toFixed(1)}" stroke="currentColor"/>` +
+      `<rect x="${Math.min(xQ1, xQ3).toFixed(1)}" y="${(midY - boxH / 2).toFixed(1)}" width="${Math.max(1, Math.abs(xQ3 - xQ1)).toFixed(1)}" height="${boxH}" fill="var(--color-accent-100)" stroke="currentColor"/>` +
+      `<line x1="${xMed.toFixed(1)}" y1="${(midY - boxH / 2).toFixed(1)}" x2="${xMed.toFixed(1)}" y2="${(midY + boxH / 2).toFixed(1)}" stroke="currentColor" stroke-width="1.5"/>` +
+      `<text x="${w}" y="${midY + 3}" font-size="8" text-anchor="end">${st.widthMax}</text>` +
+      `</svg>`;
   }
   function renderStats(resHin, resRev) {
     const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
@@ -763,7 +790,7 @@
           <td>${st.surviving}</td>
           <td>${st.failed}</td>
           <td class="${rateCls(st.rate)}">${pct(st.rate)}</td>
-          <td>${fmtRealWidth(st)}</td>
+          <td>${svgBoxplot(st)}</td>
         </tr>`);
       });
       const ov = res.optimumBand.overall;
@@ -774,11 +801,41 @@
         <td>${ov.successCount}</td>
         <td>${ov.failCount}</td>
         <td class="${rateCls(ov.rate)}">${pct(ov.rate)}</td>
-        <td>${fmtRealWidth({ surviving: ov.successCount, widthMin: ov.widthMin, widthMax: ov.widthMax, widthAvg: ov.widthAvg })}</td>
+        <td>${svgBoxplot(ov)}</td>
       </tr>`);
     });
     els.statsBody.innerHTML = rows.join('');
   }
+
+  const round1 = (v) => v == null ? null : Math.round(v * 10) / 10;
+
+  // XLSX-Export der Koordinationsstatistik: je Richtung ein Block (Übergänge
+  // + Gesamtzeile), mit der vollen Bandbreiten-Kennzahl (min/Q1/Median/Q3/
+  // max/Ø/n) statt nur des im Boxplot sichtbaren Ausschnitts.
+  function exportStatsXlsx() {
+    const dirs = [['Hinrichtung', lastResHin], ['Gegenrichtung', lastResRev]]
+      .filter(([, res]) => res && res.ok && res.optimumBand);
+    if (!dirs.length) { window.alert('Keine Koordinationsstatistik zum Exportieren vorhanden.'); return; }
+    const header = [
+      'Richtung', 'Übergang', 'Eintretend', 'Erfolgreich', 'Gescheitert', 'Quote (%)',
+      'Breite Min (s)', 'Breite Q1 (s)', 'Breite Median (s)', 'Breite Q3 (s)', 'Breite Max (s)', 'Breite Ø (s)', 'n',
+      'Engpass-Bandbreite Referenz (s)'
+    ];
+    const rows = [header];
+    dirs.forEach(([label, res]) => {
+      const bw = res.optimumBand.minTf;
+      const widthRow = (st) => [st.widthMin, round1(st.widthQ1), round1(st.widthMedian), round1(st.widthQ3), st.widthMax, round1(st.widthAvg), st.n];
+      res.optimumBand.perStation.forEach(st => {
+        rows.push([label, `${st.a.name} → ${st.b.name}`, st.entering, st.surviving, st.failed, round1(st.rate * 100), ...widthRow(st), bw]);
+      });
+      const ov = res.optimumBand.overall;
+      const first = res.optimumBand.ordered[0], last = res.optimumBand.ordered[res.optimumBand.ordered.length - 1];
+      rows.push([label, `Gesamt (${first.name} → ${last.name})`, ov.totalCycles, ov.successCount, ov.failCount, round1(ov.rate * 100), ...widthRow(ov), bw]);
+    });
+    const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    App.xlsxWriter.download(`koordinationsstatistik-${ts}.xlsx`, [{ name: 'Koordinationsstatistik', rows }]);
+  }
+  els.btnExportStats.addEventListener('click', exportStatsXlsx);
 
   /* ---------------- Umlaufübersicht ---------------- */
   // Eine Zeile je realem Umlauf (Ursprungsgrünfenster am ersten Knoten) mit
@@ -843,6 +900,40 @@
   }
   wireUmlaufJump(els.umlaufBody, () => diagramApi);
   wireUmlaufJump(els.d3UmlaufBody, () => diagramD3Api);
+
+  function fmtDateTimeFull(ms) {
+    const d = new Date(ms);
+    const p = App.utils.pad;
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  // XLSX-Export der Umlaufübersicht: ALLE Umläufe (unabhängig vom
+  // Bildschirmfilter/der Anzeige-Kappung UMLAUF_TABLE_MAX), je Richtung ein
+  // Blatt, und - anders als die Bildschirmtabelle, die nur den
+  // Gesamtausgang zeigt - je Umlauf zusätzlich ein Spaltenpaar
+  // (erreicht/Breite) für JEDEN einzelnen Knoten (LSA) im Streckenzug, aus
+  // cycles[].stations (siehe computeOptimumBand).
+  function exportUmlaufXlsx() {
+    const dirs = [['Hinrichtung', lastResHin], ['Gegenrichtung', lastResRev]]
+      .filter(([, res]) => res && res.ok && res.optimumBand && res.optimumBand.cycles.length);
+    if (!dirs.length) { window.alert('Keine Umlaufdaten zum Exportieren vorhanden.'); return; }
+    const sheets = dirs.map(([label, res]) => {
+      const stations = res.optimumBand.ordered.slice(1);
+      const header = ['Umlauf', 'Start', 'Ende', 'Durchfahrt (gesamt)', 'Bandbreite gesamt (s)'];
+      stations.forEach(n => header.push(`${n.name} erreicht`, `${n.name} Breite (s)`));
+      const rows = [header];
+      res.optimumBand.cycles.forEach((c, i) => {
+        const row = [i, fmtDateTimeFull(c.start), fmtDateTimeFull(c.end), c.success ? 'Ja' : 'Nein', c.success ? c.finalWidth : null];
+        c.stations.forEach(st => row.push(st.reached ? 'Ja' : 'Nein', st.width));
+        rows.push(row);
+      });
+      return { name: `Umlaufübersicht ${label}`, rows };
+    });
+    const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    App.xlsxWriter.download(`umlaufuebersicht-${ts}.xlsx`, sheets);
+  }
+  els.btnExportUmlauf.addEventListener('click', exportUmlaufXlsx);
+  els.d3BtnExportUmlauf.addEventListener('click', exportUmlaufXlsx);
 
   els.umlaufFilterSeg.addEventListener('change', (e) => {
     if (e.target.name !== 'umlaufFilter') return;
