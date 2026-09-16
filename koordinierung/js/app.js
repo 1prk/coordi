@@ -609,9 +609,11 @@
           ? (vps.every(v => v === vps[0]) ? `bei ${vps[0]} km/h` : `bei ${Math.min(...vps)}–${Math.max(...vps)} km/h je Abschnitt`)
           : '';
         kpis.push({
-          label: `Bandbreite ${tag} (Optimum)`,
+          label: `Engpass-Bandbreite ${tag}`,
           value: `${ov.bandwidth} s`,
-          sub: ov.successCount <= 0 ? 'kein durchgehendes Band bei dieser Geschwindigkeit (Engpass zu schmal)' : `Engpass-Grünzeit, konstant je Abschnitt · ${vpSub}`
+          sub: ov.successCount <= 0
+            ? 'kein Umlauf durchgehend - keine reale Durchfahrt gefunden'
+            : `schmalste Plan-Grünzeit im Streckenzug (Referenzwert) · reale Bänder ${ov.widthMin === ov.widthMax ? ov.widthMin + ' s' : ov.widthMin + '–' + ov.widthMax + ' s'} · ${vpSub}`
         });
         kpis.push({
           label: `Koordinationserfolg ${tag}`,
@@ -753,7 +755,7 @@
     const rows = [];
     dirs.forEach(([label, res, color]) => {
       const bw = res.optimumBand.minTf;
-      rows.push(`<tr class="stats-dir-row"><td colspan="6" style="color:${color}">${esc(label)} · Engpass-Bandbreite (Optimum) ${bw} s (konstant)</td></tr>`);
+      rows.push(`<tr class="stats-dir-row"><td colspan="6" style="color:${color}">${esc(label)} · Engpass-Bandbreite ${bw} s (schmalste Plan-Grünzeit, Referenzwert - reale Bänder s. Spalte „Bandbreite")</td></tr>`);
       res.optimumBand.perStation.forEach(st => {
         rows.push(`<tr>
           <td>${esc(st.a.name)} → ${esc(st.b.name)}</td>

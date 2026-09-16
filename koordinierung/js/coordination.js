@@ -102,101 +102,69 @@
 
   // Überlappung eines Intervalls mit einer Liste realer Intervalle (0..n
   // Treffer - üblicherweise 0 oder 1, da reale Grünfenster eines Knotens
-  // sich nicht überschneiden). "e >= s" (nicht "e > s"): ein Startzeitfenster
-  // kann auf EINEN einzigen Zeitpunkt zusammenfallen (Breite 0), nämlich
-  // genau dann, wenn ein Knoten exakt so breit ist wie der Engpass minTf -
-  // das ist der Normalfall für den Engpass-Knoten selbst und muss als
-  // gültiger Treffer zählen, nicht verworfen werden.
-  function intersectIntervalWithList(iv, list) {
+  // sich nicht überschneiden). minWidthMs (Default 0) legt fest, wie breit
+  // der Schnitt mindestens sein muss, um als Treffer zu zählen: 0 erlaubt
+  // auch ein auf einen einzigen Zeitpunkt zusammengefallenes Intervall
+  // (Breite 0) als Treffer - sinnvoll für ein reines Start-ZEITFENSTER
+  // (das selbst schon eine vorgegebene Breite trägt, siehe minTf weiter
+  // unten). Wird dagegen die reale grüne Breite selbst geschnitten (siehe
+  // realStages unten), ist ein 0-Sekunden-Schnitt KEIN real durchfahrbares
+  // Grün, sondern nur ein Berührpunkt zweier Intervallgrenzen (meist ein
+  // Rundungsartefakt der auf ganze Sekunden gerundeten Reisezeit) - dafür
+  // wird minWidthMs > 0 übergeben.
+  function intersectIntervalWithList(iv, list, minWidthMs) {
+    const minW = minWidthMs || 0;
     const out = [];
     for (const L of list) {
       const s = Math.max(iv.start, L.start), e = Math.min(iv.end, L.end);
-      if (e >= s) out.push({ start: s, end: e });
+      if (e - s >= minW) out.push({ start: s, end: e });
     }
     return out;
   }
 
-  // "Optimum"-Band: EINE feste Breite für den GESAMTEN Streckenzug - die
-  // schmalste Grünzeit unter allen durchfahrenen Knoten (der Engpass, das
-  // Minimum, das ein Fahrzeug durch JEDEN Knoten hindurch nutzen kann).
-  // Nicht abschnittsweise verengt/gestuft, sondern konstant über alle
-  // Abschnitte hinweg. Gerechnet im 1-Sekunden-Raster (kleinste Einheit),
-  // passend zur Auflösung der realen Signaldaten (An/Ab/TF sind immer
-  // ganzzahlige Sekunden) - auch die Reisezeit je Abschnitt wird dafür auf
-  // ganze Sekunden gerundet.
+  // "Optimum"-Band: die tatsächlich real durchfahrbare Bandbreite je Umlauf,
+  // ermittelt durch Verschieben und Schneiden der REALEN Grünvorkommen jedes
+  // Knotens (keine periodische mod-TU-Modellannahme). Je Knoten wird die
+  // (um die kumulierte, auf ganze Sekunden gerundete Reisezeit verschobene)
+  // Breite des Vorknotens mit der realen Grünzeit dieses Knotens geschnitten;
+  // die Breite darf dabei an jedem Übergang schrumpfen - anders als in einer
+  // früheren Fassung wird KEINE global konstante Breite (der Engpass minTf,
+  // die schmalste Plan-Grünzeit im Streckenzug) vorausgesetzt. Ein Umlauf
+  // gilt als "Durchfahrt", sobald am Ende ein nicht-leeres reales Grünfenster
+  // übrig bleibt - unabhängig davon, ob es so breit wie der Engpass ist. Ein
+  // schmaleres, aber real durchgehendes Band ist eine ebenso echte
+  // Durchfahrt wie ein minTf-breites.
   //
-  // Statt eines periodischen (mod TU) Modells mit einem Median-An/Ab-Wert
-  // wird mit den REALEN Grünvorkommen jedes Knotens gerechnet: je Knoten
-  // wird zunächst das gültige Startzeitfenster ermittelt, in dem ein
-  // minTf-breites Fenster überhaupt in dieses reale Grünvorkommen passt
-  // (Vorkommen kürzer als minTf liefert kein gültiges Startfenster). Diese
-  // Startzeitfenster werden - wie zuvor - Abschnitt für Abschnitt um die
-  // (gerundete) Reisezeit verschoben und mit denen des nächsten Knotens
-  // geschnitten. Übrig bleiben die Startzeitpunkte, an denen ein
-  // minTf-breites Fenster real durchgehend Grün hätte - ohne Periodizität
-  // vorauszusetzen, daher unempfindlich gegenüber realem Zeitversatz/
-  // Jitter zwischen den Knoten und gegenüber Planwechseln.
+  // REAL_MIN_WIDTH_MS erzwingt dabei mindestens 1 volle Sekunde realen
+  // Überlapp: ein auf 0s (exakte Kantenberührung zweier Intervalle)
+  // zusammengeschnittenes "Fenster" ist kein real durchfahrbares Grün,
+  // sondern typischerweise ein Rundungsartefakt der auf ganze Sekunden
+  // gerundeten Reisezeit - das zählt daher als gescheitert, nicht als
+  // (unsinnig "0 Sekunden breite") erfolgreiche Durchfahrt.
   //
-  // Die Koordinationsstatistik (je Knoten, wie viele Umläufe dort noch
-  // "erfolgreich"/"gescheitert" sind) wird NICHT aus dieser minTf-Kette
-  // abgeleitet, sondern aus einer separaten, ungeklammerten Kette weiter
-  // unten (realStages) - siehe deren Kommentar für den Grund.
+  // minTf (schmalste PLAN-Grünzeit im Streckenzug) bleibt als informativer
+  // Kennwert ("Engpass-Bandbreite") erhalten, bestimmt aber nicht mehr, ob
+  // oder wie breit ein Umlauf gezeichnet/gezählt wird.
+  const REAL_MIN_WIDTH_MS = 1000;
+
   function computeOptimumBand(rows, vpKmhArray, TU, dir) {
     if (!TU || rows.length < 2) return null;
     const ordered = dir === 'fwd' ? rows : rows.slice().reverse();
     if (!vpKmhArray || vpKmhArray.length < ordered.length - 1) return null;
     const tauRaw = computeTau(ordered, vpKmhArray);
     if (!tauRaw) return null;
-    // Reisezeit je Abschnitt auf ganze Sekunden gerundet (1s-Schrittweite).
+    // Reisezeit je Abschnitt auf ganze Sekunden gerundet (1s-Schrittweite,
+    // passend zur Auflösung der realen Signaldaten - An/Ab/TF sind immer
+    // ganzzahlige Sekunden).
     const tau = [0];
     for (let i = 1; i < ordered.length; i++) tau.push(tau[i - 1] + Math.round(tauRaw[i] - tauRaw[i - 1]));
 
-    // Engpass: die schmalste Grünzeit unter allen Knoten im Streckenzug -
-    // diese (und nur diese) Breite gilt für das ganze Band.
+    // Engpass: die schmalste PLAN-Grünzeit unter allen Knoten im
+    // Streckenzug - rein informativer Kennwert (overall.bandwidth), siehe
+    // Funktionskommentar oben.
     const minTf = Math.min(...ordered.map(r => r.tf));
     if (!(minTf > 0)) return null;
 
-    // Gültiges Startzeitfenster je realem Grünvorkommen: [g.start, g.end -
-    // minTf], d. h. alle Zeitpunkte, an denen ein minTf-breites Fenster
-    // noch vollständig in dieses Vorkommen passt. Vorkommen kürzer als
-    // minTf liefern kein gültiges Fenster (fallen komplett weg).
-    function validStartsFor(node) {
-      return (node.greenSegs || [])
-        .filter(g => Math.round((g.end - g.start) / 1000) >= minTf)
-        .map(g => ({ start: g.start, end: g.end - minTf * 1000, segStart: g.start, segEnd: g.end }));
-    }
-
-    let stage = validStartsFor(ordered[0]).map((iv, idx) => ({ ...iv, origin: idx }));
-    const stages = [stage];
-    for (let i = 1; i < ordered.length; i++) {
-      const dtMs = (tau[i] - tau[i - 1]) * 1000;
-      const shifted = stage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs, origin: iv.origin }));
-      const nodeValid = validStartsFor(ordered[i]);
-      const next = [];
-      shifted.forEach(iv => { intersectIntervalWithList(iv, nodeValid).forEach(r => next.push({ ...r, origin: iv.origin })); });
-      stages.push(next);
-      stage = next;
-    }
-
-    const finalStage = stages[stages.length - 1];
-
-    // Reale Durchfahrt-Erkennung: dieselbe Verschiebe-und-Schneide-Kette wie
-    // oben für das Optimum-Band, aber OHNE die minTf-Klammerung - hier werden
-    // die tatsächlichen grünen Intervalle jedes Knotens direkt geschnitten.
-    // Die Breite des überlebenden Intervalls darf dabei an jedem Übergang
-    // schrumpfen (auch unter minTf) - "erfolgreich" heißt hier nur noch: am
-    // Ende bleibt ein nicht-leeres reales Grünfenster übrig, unabhängig
-    // davon, ob es so breit wie der Streckenzug-Engpass (minTf) ist.
-    //
-    // Das ist bewusst von der obigen minTf-Kette getrennt: validStartsFor()
-    // verwirft jedes reale Grünvorkommen, das schmaler als minTf ist,
-    // komplett - eine dort real erfolgreiche Durchfahrt mit einem schmaleren
-    // als dem Engpass-Band wäre damit unsichtbar bzw. fälschlich als
-    // "gescheitert" gezählt, nur weil sie nicht die volle Engpassbreite
-    // hätte. Das Optimum-Band bleibt EINE konstante Breite (für die
-    // Bandvisualisierung); diese Kette bildet dagegen die real erlebte
-    // Durchfahrt ab und ist die Grundlage für Koordinationsstatistik,
-    // Umlaufübersicht und Koordinierungsmaß (siehe computeKoordinierungsmass).
     function realIntervalsFor(node) {
       return (node.greenSegs || []).map(g => ({ start: g.start, end: g.end, segStart: g.start, segEnd: g.end }));
     }
@@ -207,7 +175,7 @@
       const shifted = realStage.map(iv => ({ start: iv.start + dtMs, end: iv.end + dtMs, origin: iv.origin }));
       const nodeReal = realIntervalsFor(ordered[i]);
       const next = [];
-      shifted.forEach(iv => { intersectIntervalWithList(iv, nodeReal).forEach(r => next.push({ ...r, origin: iv.origin })); });
+      shifted.forEach(iv => { intersectIntervalWithList(iv, nodeReal, REAL_MIN_WIDTH_MS).forEach(r => next.push({ ...r, origin: iv.origin })); });
       realStages.push(next);
       realStage = next;
     }
@@ -231,47 +199,36 @@
       ...widthStats(realFinalStage)
     };
 
-    // Nur Zyklen zeichnen, die den GESAMTEN Streckenzug bis zum letzten
-    // Knoten überstehen (nicht jeden Zwischenstand je Abschnitt) - EIN
-    // durchgehendes, konstant minTf breites Band pro erfolgreichem Zyklus
-    // über ALLE Abschnitte hinweg, verankert am frühestmöglichen
-    // Startzeitpunkt am ERSTEN Knoten (s0) und nur um die kumulierte
-    // Reisezeit je Knoten verschoben - dieselbe Form an jedem Abschnitt,
-    // kein Sprung/Tapern zwischen den Knoten, weil es exakt dasselbe Fenster
-    // ist. Reicht damit vom frühestmöglichen bis zum spätestmöglichen
-    // (jeweils real erreichbaren) Grünzeitpunkt im Streckenzug.
-    //
-    // WICHTIG: als Anker dient NICHT der rohe (ungeklammerte) Startwert aus
-    // stages[0], sondern der tatsächlich überlebende Wert aus der LETZTEN
-    // Stufe, zurückgerechnet auf den Nullpunkt (abzüglich der gesamten
-    // Reisezeit). Eine Zwischenstation kann das gültige Startfenster enger
-    // klammern (nicht nur der Engpass-Knoten selbst) - wird dort weiterhin
-    // der rohe Ursprungswert verwendet, kann das gezeichnete Fenster an
-    // genau dieser Zwischenstation außerhalb des tatsächlich geprüften
-    // (validen) Bereichs liegen. Der zurückgerechnete Endwert ist dagegen
-    // per Konstruktion (Schnittmengen können nur enger werden) an JEDER
-    // Station gültig.
+    // Gezeichnetes Band je erfolgreichem Umlauf: verankert an der
+    // tatsächlich bis zum letzten Knoten überlebenden realen Breite dieses
+    // Umlaufs (NICHT mehr am globalen Engpass minTf) - zurückgerechnet auf
+    // den Nullpunkt (abzüglich der gesamten Reisezeit) und nur um die
+    // kumulierte Reisezeit je Knoten verschoben, dieselbe (konstante)
+    // Breite an jedem Abschnitt. Das ist weiterhin an JEDER Zwischenstation
+    // gültig, weil Schnittmengen nur enger werden können (die am Ende
+    // überlebende Breite ist also an jedem vorherigen Knoten ebenfalls
+    // innerhalb des realen Grüns) - siehe assertWithinRealGreen() unten.
+    // Anders als zuvor ist die Breite NICHT mehr für alle Umläufe eines
+    // Streckenzugs identisch, sondern je Umlauf seine eigene real erreichte
+    // (ggf. schmalere) Breite.
     const tauLastMs = tau[tau.length - 1] * 1000;
-    const survivorAnchors = finalStage.map(iv => ({ origin: iv.origin, s0: iv.start - tauLastMs }));
+    const survivorAnchors = realFinalStage.map(iv => ({
+      origin: iv.origin,
+      s0: iv.start - tauLastMs,
+      widthMs: iv.end - iv.start
+    }));
 
-    // Diagnose: minTf kommt vom (Median-)Plan-tf des schmalsten Knotens im
-    // Streckenzug (rows[].tf, aus computeSignalplanRow) - NICHT von der
-    // konkreten realen Grünzeit eines einzelnen Vorkommens. Ein Knoten kann
-    // daher gelegentlich ein reales Grünsegment haben, dessen tatsächliche
-    // Breite vom Median abweicht; validStartsFor() filtert solche Segmente
-    // (falls zu kurz) bereits korrekt heraus. Zur Nachvollziehbarkeit hier
-    // protokolliert, welcher Knoten den Engpass stellt.
-    const bottleneckNode = ordered.find(r => r.tf === minTf);
     if (typeof console !== 'undefined' && console.debug) {
-      console.debug(`[Optimum] minTf=${minTf}s (Engpass: ${bottleneckNode ? bottleneckNode.name : '?'}, Plan-TF) für Streckenzug ${ordered.map(r => r.name).join(' -> ')}`);
+      const bottleneckNode = ordered.find(r => r.tf === minTf);
+      console.debug(`[Optimum] Engpass-Bandbreite (Plan-TF) minTf=${minTf}s (${bottleneckNode ? bottleneckNode.name : '?'}), real erfolgreiche Umläufe: ${overall.successCount}/${overall.totalCycles} für Streckenzug ${ordered.map(r => r.name).join(' -> ')}`);
     }
 
     // Laufzeit-Assert: jedes gezeichnete Fenster MUSS innerhalb eines realen
-    // Grünsegments der jeweiligen Station liegen (per Definition des
-    // Optimum-Bands - siehe Kommentar oben). Verletzung wird mit Knoten und
-    // Zeitstempel geloggt, damit sich eine trotzdem auftretende Abweichung
-    // (z. B. ein Rundungs-/Umlaufgrenzen-Sonderfall) in Sekunden statt durch
-    // Rätselraten lokalisieren lässt.
+    // Grünsegments der jeweiligen Station liegen (per Konstruktion, s.o.).
+    // Verletzung wird mit Knoten und Zeitstempel geloggt, damit sich eine
+    // trotzdem auftretende Abweichung (z. B. ein Rundungs-/
+    // Umlaufgrenzen-Sonderfall) in Sekunden statt durch Rätselraten
+    // lokalisieren lässt.
     function assertWithinRealGreen(node, start, end, label) {
       const ok = (node.greenSegs || []).some(g => start >= g.start && end <= g.end);
       if (!ok && typeof console !== 'undefined') {
@@ -289,8 +246,8 @@
     for (let i = 1; i < ordered.length; i++) {
       const tauA = tau[i - 1], tauB = tau[i];
       const runs = survivorAnchors.map(a => {
-        const frontStart = a.s0 + tauA * 1000, frontEnd = frontStart + minTf * 1000;
-        const backStart = a.s0 + tauB * 1000, backEnd = backStart + minTf * 1000;
+        const frontStart = a.s0 + tauA * 1000, frontEnd = frontStart + a.widthMs;
+        const backStart = a.s0 + tauB * 1000, backEnd = backStart + a.widthMs;
         return { frontStart, frontEnd, backStart, backEnd };
       });
       runs.forEach(run => {
@@ -317,7 +274,7 @@
     // des Koordinierungsmaßes (siehe computeKoordinierungsmass): die Anzahl
     // der Knoten-Übergänge (von N_K,LSA - 1 möglichen), die ohne Halt
     // passiert wurden - 0, wenn schon der erste Folgeknoten nicht erreicht
-    // wurde, bis maximal stages.length - 1 (= ordered.length - 1) bei
+    // wurde, bis maximal realStages.length - 1 (= ordered.length - 1) bei
     // vollständiger Durchfahrt.
     const cycles = realStages[0].map(start0 => {
       let survivedIdx = 0;
