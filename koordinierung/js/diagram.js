@@ -15,6 +15,13 @@
   // Pixel-Abbildung hier.
   const STATION_VISUAL_BUFFER_M = 10;
 
+  // Track-Spuren neben der Knotenlinie (siehe App.coordination/app.js
+  // tracks): DET weiterhin als belegt-Balken (Vollton), APW als Balken mit
+  // Wert-Label je Segment - eigene Farbe, damit beide auch ohne Legende
+  // unterscheidbar sind.
+  const DET_COLOR = '#6a3fa0';
+  const APW_COLOR = '#b5670a';
+
   // Rasterschritt als (nette) Bruchteil der Umlaufzeit TU - so landen die
   // Gitterlinien exakt auf TX-Werten (Sekunde im Umlauf) statt auf
   // beliebigen "runden" Sekundenzahlen ohne Bezug zum Umlauf.
@@ -97,10 +104,15 @@
         opt: makeHatchPattern('#00e5ff', 45, 'Ro')     // Rück Optimum: neonblau, Schraffur nach rechts
       }
     };
+    // APW-Wert 0 ist laut OCIT-Spezifikation ein Sonderfall, keine "normale"
+    // Zahl wie jeder andere Wert (und ausdrücklich etwas anderes als "kein
+    // Wert"/leer) - daher schraffiert statt Vollton, analog zu den
+    // Grünband-Schraffuren oben.
+    const apwZeroPattern = makeHatchPattern(APW_COLOR, 45, 'Apw0');
 
     let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, ui-monospace, monospace">`;
     svg += `<defs><clipPath id="${clipId}"><rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}"/></clipPath>`;
-    svg += bandStyle.H.qual.def + bandStyle.H.opt.def + bandStyle.R.qual.def + bandStyle.R.opt.def;
+    svg += bandStyle.H.qual.def + bandStyle.H.opt.def + bandStyle.R.qual.def + bandStyle.R.opt.def + apwZeroPattern.def;
     svg += `</defs>`;
     svg += `<rect x="${mL}" y="${mT}" width="${plotW}" height="${plotH}" fill="#fff" stroke="var(--border-strong)"/>`;
 
@@ -256,19 +268,34 @@
             overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ys - 2).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${ab}</text>`;
           }
         });
-        // Ausgewählte Detektoren (siehe Setup-Tab, Knotenkarte): je Detektor
-        // eine eigene schmale Spur rechts neben der Knotenlinie (jenseits der
-        // An/Ab-Beschriftung bei x+6), mit den realen belegt-Intervallen -
-        // erlaubt den Vergleich "Anforderung/Belegung kurz vor/während der
-        // Freigabe" direkt gegen die Grünzeit an diesem Knoten.
-        (r.detSegs || []).forEach((det, di) => {
+        // Zugeordnete Det/APW-Spuren dieser Signalgruppe (siehe Setup-Tab,
+        // "+ Det/APW hinzufügen" je Richtung): je Spur eine eigene schmale
+        // Spur rechts neben der Knotenlinie (jenseits der An/Ab-Beschriftung
+        // bei x+6) - DET als belegt-Balken (Vergleich "Anforderung/Belegung
+        // kurz vor/während der Freigabe" gegen die Grünzeit), APW als Balken
+        // mit dem jeweiligen Wert als Label (ausgeblendet, wenn das Segment
+        // dafür zu kurz ist - der Wert bleibt im Tooltip abrufbar).
+        (r.tracks || []).forEach((tr, di) => {
           const xd = x + 18 + di * 7;
-          det.segs.forEach(seg => {
-            const ys = Y(seg.end), ye = Y(seg.start);
-            if (ye < mT || ys > mT + plotH) return;
-            const h = Math.max(1, ye - ys);
-            overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="#6a3fa0"><title>${esc(det.name)} (${d.tag} ${esc(r.name)}): belegt ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
-          });
+          if (tr.kind === 'DET') {
+            tr.segs.forEach(seg => {
+              const ys = Y(seg.end), ye = Y(seg.start);
+              if (ye < mT || ys > mT + plotH) return;
+              const h = Math.max(1, ye - ys);
+              overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="${DET_COLOR}"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): belegt ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)}</title></rect>`;
+            });
+          } else if (tr.kind === 'APW') {
+            tr.segs.forEach(seg => {
+              const ys = Y(seg.end), ye = Y(seg.start);
+              if (ye < mT || ys > mT + plotH) return;
+              const h = Math.max(1, ye - ys);
+              const fill = seg.cat === '0' ? apwZeroPattern.url : APW_COLOR;
+              overlay += `<rect x="${(xd - 2).toFixed(1)}" y="${ys.toFixed(1)}" width="4" height="${h.toFixed(1)}" fill="${fill}"><title>${esc(tr.name)} (${d.tag} ${esc(r.name)}): ${esc(seg.cat)} (${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)})</title></rect>`;
+              if (h >= 13) {
+                overlay += `<text x="${xd.toFixed(1)}" y="${(ys + h / 2 + 3).toFixed(1)}" font-size="8" text-anchor="middle" fill="#fff" font-weight="700">${esc(seg.cat)}</text>`;
+              }
+            });
+          }
         });
         svg += `<g clip-path="${clip}">${overlay}</g>`;
       });

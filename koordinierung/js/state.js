@@ -24,6 +24,20 @@
     return 'BELEGT';
   }
 
+  // Rohwert einer APW-Spalte (Kategorie APW_WERT, OCIT-Typname ta/firmware):
+  // ein kontinuierlicher Wert, kein Zustand wie bei DET - JEDER Wert (auch
+  // "0", ein laut Spezifikation eigener Sonderfall) ist bedeutungstragend,
+  // daher wird der Rohwert selbst (getrimmt) als Segment-Kategorie verwendet:
+  // ein neues Segment beginnt, sobald sich der Wert ändert. "INV" bekommt
+  // eine eigene Kategorie und wird beim Zeichnen ausgefiltert (siehe
+  // app.js pushRow). Eine leere Zelle erzeugt gar kein Segment -
+  // buildSegments() überspringt leere Rohwerte bereits selbst, und das ist
+  // für APW korrekt: leer ("kein Wert") ist ausdrücklich etwas anderes als 0.
+  function categorizeApwRaw(raw) {
+    const s = String(raw ?? '').trim();
+    return s.toUpperCase() === 'INV' ? 'INV' : s;
+  }
+
   // Baut aus Rohtext (eine CSV-Datei = ein Knoten) einen Zustandseintrag.
   // Neben dem Gesamt-Mitschnitt-Plan (planByCol) bleiben times/splValues/
   // cycleStarts sowie die Segmente je Spalte (segsByCol) erhalten, damit sich
@@ -61,6 +75,15 @@
       detSegsByCol.set(col.index, buildSegments(parsed.times, rawSeries, categorizeDetRaw));
     });
 
+    // APW: je Spalte die Wert-Segmente vorab berechnen (siehe
+    // categorizeApwRaw) - analog zu DET, aber ohne die leer->"0"-Umwandlung,
+    // da bei APW eine leere Zelle bewusst KEIN Segment erzeugen soll.
+    const apwColumns = parsed.otherColumns.filter(c => c.kuerzel === 'APW');
+    const apwSegsByCol = new Map();
+    apwColumns.forEach(col => {
+      apwSegsByCol.set(col.index, buildSegments(parsed.times, parsed.seriesByCol.get(col.index), categorizeApwRaw));
+    });
+
     return {
       id: uid(),
       fileName,
@@ -71,9 +94,14 @@
       segsByCol,
       detColumns,
       detSegsByCol,
-      // Indizes der DET-Spalten, die im Diagramm an diesem Knoten überlagert
-      // werden sollen (vom Nutzer je Knoten ausgewählt, siehe Setup-Tab).
-      selectedDet: [],
+      apwColumns,
+      apwSegsByCol,
+      // Zuordnung DET-/APW-Spalte -> Signalgruppe: { [Spaltenindex]: 'hin' |
+      // 'rev' }, vom Nutzer je Signalgruppe vergeben (siehe Setup-Tab). Strikt
+      // 1:1 - eine Spalte fehlt hier, wenn sie keiner Richtung zugeordnet ist,
+      // und kann nie beiden Richtungen gleichzeitig zugeordnet sein (siehe
+      // app.js renderNodeList()/trackPickerHtml).
+      assignedTracks: {},
       times: parsed.times,
       cycleStarts: parsed.cycleStarts,
       splPeriods,

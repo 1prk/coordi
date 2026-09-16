@@ -176,6 +176,18 @@
             entry.revOffset = Number(saved.revOffset) || 0;
             entry.vpHin = Number(saved.vpHin) || 50;
             entry.vpRev = Number(saved.vpRev) || 50;
+            // Nur Zuordnungen übernehmen, deren Spaltenindex in DIESER
+            // (neu geparsten) Datei tatsächlich noch eine DET-/APW-Spalte
+            // ist - sonst könnten abweichende Spaltenlayouts (andere CSV
+            // unter demselben Dateinamen) unbemerkt eine falsche Spalte
+            // zuordnen. Alte Exporte ohne assignedTracks (vor dieser
+            // Funktion) importieren dadurch einfach ohne Zuordnung - der
+            // Nutzer wählt dann neu, statt dass geraten wird.
+            const validIdxs = new Set(trackOptions(entry).map(c => c.index));
+            entry.assignedTracks = {};
+            Object.entries(saved.assignedTracks || {}).forEach(([idx, dir]) => {
+              if (validIdxs.has(Number(idx)) && (dir === 'hin' || dir === 'rev')) entry.assignedTracks[Number(idx)] = dir;
+            });
           }
         }
         state.addIntersection(entry);
@@ -254,7 +266,8 @@
         distanceRev: n.distanceRev,
         revOffset: n.revOffset,
         vpHin: n.vpHin,
-        vpRev: n.vpRev
+        vpRev: n.vpRev,
+        assignedTracks: n.assignedTracks || {}
       }))
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -299,6 +312,47 @@
     }).join('');
   }
 
+  // Alle DET- + APW-Spalten eines Knotens als eine gemeinsame Liste - Basis
+  // für den Det/APW-Zuordner je Signalgruppe (siehe trackPickerHtml).
+  function trackOptions(n) {
+    return [
+      ...(n.detColumns || []).map(c => ({ ...c, trackKind: 'DET' })),
+      ...(n.apwColumns || []).map(c => ({ ...c, trackKind: 'APW' }))
+    ];
+  }
+
+  // "+ Det/APW hinzufügen" je Signalgruppe (dir: 'hin' | 'rev'). Strikt 1:1:
+  // eine Spalte, die bereits der ANDEREN Richtung zugeordnet ist, erscheint
+  // in der Liste ausgegraut/deaktiviert statt wählbar - eine Spalte kann nie
+  // beiden Richtungen gleichzeitig zugeordnet sein (siehe node.assignedTracks
+  // in state.js). Oberhalb der (auf-/zuklappbaren) Auswahlliste stehen die
+  // dieser Richtung bereits zugeordneten Spalten als Chips, damit der
+  // aktuelle Stand auch ohne Aufklappen sichtbar ist.
+  function trackPickerHtml(n, dir) {
+    const opts = trackOptions(n);
+    if (!opts.length) return '';
+    const assigned = n.assignedTracks || {};
+    const mine = opts.filter(c => assigned[c.index] === dir);
+    const otherDir = dir === 'hin' ? 'rev' : 'hin';
+    const otherLabel = dir === 'hin' ? 'Rück' : 'Hin';
+    const rows = opts.map(c => {
+      const takenByOther = assigned[c.index] === otherDir;
+      const checked = assigned[c.index] === dir;
+      return `<label class="radio track-picker-row ${takenByOther ? 'is-taken' : ''}">
+        <input type="checkbox" class="node-track-check" data-dir="${dir}" value="${c.index}" ${checked ? 'checked' : ''} ${takenByOther ? 'disabled' : ''}>
+        <span class="dot" style="border-radius:2px;"></span>
+        <span class="tag tag-neutral track-kind-tag">${c.trackKind}</span> ${esc(c.name)}
+        ${takenByOther ? `<em class="track-taken-note">— an ${otherLabel} vergeben</em>` : ''}
+      </label>`;
+    }).join('');
+    const openAttr = n[`_trackPickerOpen_${dir}`] ? ' open' : '';
+    return `<details class="track-picker" data-dir="${dir}"${openAttr}>
+        <summary class="add-track-btn">+ Det/APW hinzufügen${mine.length ? ` (${mine.length})` : ''}</summary>
+        <div class="track-picker-list">${rows}</div>
+      </details>
+      ${mine.length ? `<div class="track-chip-row">${mine.map(c => `<span class="track-chip track-chip-${c.trackKind.toLowerCase()}">${c.trackKind} ${esc(c.name)}</span>`).join('')}</div>` : ''}`;
+  }
+
   function renderNodeList() {
     const nodes = state.intersections;
     if (nodes.length === 0) {
@@ -339,16 +393,6 @@
             <label>V_p Rück [km/h]</label>
             <input class="input node-vp-rev" type="number" min="1" step="1" value="${n.vpRev || 50}">
           </div>`;
-      const detField = (n.detColumns || []).length ? `<div class="node-det">
-          <div class="tag tag-neutral">Detektoren</div>
-          <div class="node-det-list">
-            ${n.detColumns.map(c => `<label class="radio">
-              <input type="checkbox" class="node-det-check" value="${c.index}" ${(n.selectedDet || []).includes(c.index) ? 'checked' : ''}>
-              <span class="dot" style="border-radius:2px;"></span>
-              ${esc(c.name)}
-            </label>`).join('')}
-          </div>
-        </div>` : '';
       return `<div class="node-card card elev-sm" data-id="${n.id}">
         <div class="node-card-head">
           <div class="node-order">
@@ -374,6 +418,7 @@
                 <input class="input node-dist-hin" type="number" min="0" step="10" value="${distHin}" ${hinDisabled ? 'disabled' : ''}>
               </div>
               ${vpHinField}
+              ${trackPickerHtml(n, 'hin')}
             </div>
           </div>
           <div>
@@ -384,10 +429,10 @@
                 <select class="input node-sig-select node-sig-rev">${sigOptions(n, n.mainColRev)}</select>
               </div>
               ${revOffsetField}
+              ${trackPickerHtml(n, 'rev')}
             </div>
           </div>
         </div>
-        ${detField}
       </div>`;
     }).join('');
 
@@ -405,14 +450,28 @@
       if (vpRevInput) vpRevInput.addEventListener('change', (e) => { node.vpRev = Number(e.target.value) || 0; recompute(); });
       const revOffsetInput = card.querySelector('.node-rev-offset');
       if (revOffsetInput) revOffsetInput.addEventListener('change', (e) => { node.revOffset = Number(e.target.value) || 0; recompute(); });
-      card.querySelectorAll('.node-det-check').forEach(chk => {
+      // Det/APW-Zuordnung je Signalgruppe (siehe trackPickerHtml): Ankreuzen
+      // trägt die Spalte strikt 1:1 in node.assignedTracks ein (die andere
+      // Richtung kann dieselbe Spalte danach nicht mehr wählen), Abwählen
+      // entfernt die Zuordnung wieder. renderNodeList() (nicht nur
+      // recompute()) ist hier nötig, damit die jeweils ANDERE Spalten-Picker-
+      // Liste im selben Knoten sofort "vergeben" zeigt.
+      card.querySelectorAll('.node-track-check').forEach(chk => {
         chk.addEventListener('change', (e) => {
           const idx = Number(e.target.value);
-          node.selectedDet = e.target.checked
-            ? [...(node.selectedDet || []), idx]
-            : (node.selectedDet || []).filter(v => v !== idx);
+          const dir = e.target.dataset.dir;
+          node.assignedTracks = node.assignedTracks || {};
+          if (e.target.checked) node.assignedTracks[idx] = dir;
+          else delete node.assignedTracks[idx];
+          renderNodeList();
           recompute();
         });
+      });
+      // Auf-/zugeklappt-Status je Picker am Knoten selbst gemerkt (nicht
+      // Teil der exportierten Konfiguration) - überlebt so den
+      // renderNodeList()-Neuaufbau, den jede Zuordnungsänderung auslöst.
+      card.querySelectorAll('.track-picker').forEach(det => {
+        det.addEventListener('toggle', () => { node[`_trackPickerOpen_${det.dataset.dir}`] = det.open; });
       });
       card.querySelector('.node-remove').addEventListener('click', () => { state.removeIntersection(id); renderNodeList(); recompute(); });
       const upBtn = card.querySelector('.node-up');
@@ -457,6 +516,7 @@
     let TUref = null;
     const tus = [];
     const colField = dirKey === 'Hin' ? 'mainColHin' : 'mainColRev';
+    const trackKey = dirKey === 'Hin' ? 'hin' : 'rev';
 
     const pushRow = (n, station) => {
       const col = n[colField];
@@ -465,6 +525,24 @@
       tus.push(n.TU);
       if (TUref == null) TUref = n.TU;
       const colInfo = n.columns.find(c => c.index === col);
+      // Det/APW dieser Signalgruppe (siehe renderNodeList/trackPickerHtml) -
+      // strikt 1:1 zugeordnet (node.assignedTracks), daher hier direktionsgenau
+      // gefiltert statt wie früher pauschal für den ganzen Knoten. DET liefert
+      // weiterhin nur die belegt-Segmente (Balken); APW liefert JEDES
+      // Wert-Segment außer "INV" (jeder Wert ist bedeutungstragend, siehe
+      // state.js categorizeApwRaw) - Kind bleibt am Track dran, damit die
+      // Diagramme DET (Balken) und APW (Balken mit Wert-Label) unterschiedlich
+      // zeichnen können.
+      const assignedIdxs = Object.keys(n.assignedTracks || {})
+        .map(Number)
+        .filter(idx => n.assignedTracks[idx] === trackKey);
+      const tracks = assignedIdxs.map(idx => {
+        const detInfo = (n.detColumns || []).find(c => c.index === idx);
+        if (detInfo) return { kind: 'DET', name: detInfo.name, segs: (n.detSegsByCol.get(idx) || []).filter(s => s.cat === 'BELEGT') };
+        const apwInfo = (n.apwColumns || []).find(c => c.index === idx);
+        if (apwInfo) return { kind: 'APW', name: apwInfo.name, segs: (n.apwSegsByCol.get(idx) || []).filter(s => s.cat !== 'INV') };
+        return null;
+      }).filter(Boolean);
       rows.push({
         nodeId: n.id,
         name: n.knotenName || n.fileName,
@@ -477,14 +555,7 @@
         greenSegs: (n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN'),
         tMin: n.times[0], tMax: n.times[n.times.length - 1],
         cycleStarts: n.cycleStarts, splPeriods: n.splPeriods,
-        // Vom Nutzer ausgewählte Detektoren dieses Knotens (siehe
-        // renderNodeList) - roh als belegt-Segmente fürs Diagramm, unabhängig
-        // von Richtung/Hauptsignal, da ein Detektor eine physische
-        // Einrichtung am Knoten ist, keine SG-spezifische Größe.
-        detSegs: (n.selectedDet || []).map(idx => {
-          const info = (n.detColumns || []).find(c => c.index === idx);
-          return { name: info ? info.name : '', segs: (n.detSegsByCol.get(idx) || []).filter(s => s.cat === 'BELEGT') };
-        })
+        tracks
       });
     };
 
