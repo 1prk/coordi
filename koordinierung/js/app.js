@@ -140,27 +140,7 @@
         const entry = state.buildIntersection(file.name, text);
         if (importCtx) {
           const saved = importCtx.nodes.find(n => n.fileName === file.name);
-          if (saved) {
-            if (saved.mainColHin != null) entry.mainColHin = saved.mainColHin;
-            if (saved.mainColRev != null) entry.mainColRev = saved.mainColRev;
-            entry.distanceHin = Number(saved.distanceHin) || 0;
-            entry.distanceRev = Number(saved.distanceRev) || 0;
-            entry.revOffset = Number(saved.revOffset) || 0;
-            entry.vpHin = Number(saved.vpHin) || 50;
-            entry.vpRev = Number(saved.vpRev) || 50;
-            // Nur Zuordnungen übernehmen, deren Spaltenindex in DIESER
-            // (neu geparsten) Datei tatsächlich noch eine DET-/APW-Spalte
-            // ist - sonst könnten abweichende Spaltenlayouts (andere CSV
-            // unter demselben Dateinamen) unbemerkt eine falsche Spalte
-            // zuordnen. Alte Exporte ohne assignedTracks (vor dieser
-            // Funktion) importieren dadurch einfach ohne Zuordnung - der
-            // Nutzer wählt dann neu, statt dass geraten wird.
-            const validIdxs = new Set(trackOptions(entry).map(c => c.index));
-            entry.assignedTracks = {};
-            Object.entries(saved.assignedTracks || {}).forEach(([idx, dir]) => {
-              if (validIdxs.has(Number(idx)) && (dir === 'hin' || dir === 'rev')) entry.assignedTracks[Number(idx)] = dir;
-            });
-          }
+          if (saved) applySavedNode(entry, saved);
         }
         state.addIntersection(entry);
         clearError();
@@ -186,16 +166,7 @@
       state.clearIntersections();
       reordered.forEach(n => state.addIntersection(n));
 
-      if (importCtx.settings) {
-        els.baseStationInput.value = importCtx.settings.baseStation ?? 0;
-        els.dirSelect.value = importCtx.settings.dirMode ?? 'both';
-        els.bandQualitativeInput.checked = !!importCtx.settings.showQualitative;
-        els.bandOptimumInput.checked = !!importCtx.settings.showOptimum;
-        // Ältere Exporte kennen showPartial noch nicht - dann wie der
-        // Standard (an) statt stillschweigend aus.
-        els.bandPartialInput.checked = importCtx.settings.showPartial ?? true;
-        els.showTimestampInput.checked = !!importCtx.settings.showTimestamp;
-      }
+      if (importCtx.settings) applySavedSettings(importCtx.settings);
       const missing = orderedNames.filter(fn => !reordered.some(n => n.fileName === fn));
       renderNodeList();
       recompute();
@@ -215,47 +186,128 @@
 
   /* ---------------- Konfiguration exportieren/importieren ---------------- */
   // Rein clientseitig, kein Netzwerkzugriff (kein CORS-Risiko), läuft daher
-  // identisch unter file://. Der Export enthält NICHT die CSV-Rohdaten
-  // selbst - nur den Dateinamen je Knoten plus alle Einstellungen
-  // (Abstände, V_p, Hauptsignal-Wahl, Basis-Station, Anzeigeoptionen). Beim
-  // Import müssen die referenzierten CSV-Dateien daher erneut ausgewählt
-  // werden (der Browser kann aus Sicherheitsgründen nicht selbst auf
-  // Dateipfade zugreifen) - die Einstellungen werden dann anhand des
-  // Dateinamens wieder zugeordnet.
-  function exportConfig() {
-    const data = {
-      formatVersion: 2,
-      exportedAt: new Date().toISOString(),
-      settings: {
-        baseStation: Number(els.baseStationInput.value) || 0,
-        dirMode: els.dirSelect.value,
-        showQualitative: els.bandQualitativeInput.checked,
-        showOptimum: els.bandOptimumInput.checked,
-        showPartial: els.bandPartialInput.checked,
-        showTimestamp: els.showTimestampInput.checked
-      },
-      nodes: state.intersections.map(n => ({
-        fileName: n.fileName,
-        mainColHin: n.mainColHin,
-        mainColRev: n.mainColRev,
-        distanceHin: n.distanceHin,
-        distanceRev: n.distanceRev,
-        revOffset: n.revOffset,
-        vpHin: n.vpHin,
-        vpRev: n.vpRev,
-        assignedTracks: n.assignedTracks || {}
-      }))
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `koordinierung-config-${ts}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  // identisch unter file://. formatVersion 3: der Export enthält je Knoten
+  // zusätzlich ein komprimiertes Datenpaket (siehe datapack.js - gewählte
+  // Hauptsignale, alle DET/APW, Zyklusstarts, Plan-Perioden; die übrigen
+  // Signalgruppen entfallen bewusst) plus alle Einstellungen (Abstände, V_p,
+  // Hauptsignal-Wahl, Det/APW-Zuordnung, Basis-Station, Anzeigeoptionen).
+  // Der Import braucht dann KEINE CSV mehr. Exporte der formatVersion 2
+  // (nur Dateiname je Knoten, ohne Daten) lassen sich weiterhin importieren -
+  // dabei müssen die referenzierten CSV-Dateien erneut ausgewählt werden (der
+  // Browser kann aus Sicherheitsgründen nicht selbst auf Dateipfade
+  // zugreifen); die Einstellungen werden dann anhand des Dateinamens wieder
+  // zugeordnet.
+  const EXPORT_FORMAT_VERSION = 3;
+
+  // Einstellungen eines gespeicherten Knotens auf einen frisch aufgebauten
+  // Eintrag übertragen (CSV-Import und Paket-Import gleichermaßen).
+  function applySavedNode(entry, saved) {
+    if (saved.mainColHin != null) entry.mainColHin = saved.mainColHin;
+    if (saved.mainColRev != null) entry.mainColRev = saved.mainColRev;
+    entry.distanceHin = Number(saved.distanceHin) || 0;
+    entry.distanceRev = Number(saved.distanceRev) || 0;
+    entry.revOffset = Number(saved.revOffset) || 0;
+    entry.vpHin = Number(saved.vpHin) || 50;
+    entry.vpRev = Number(saved.vpRev) || 50;
+    // Nur Zuordnungen übernehmen, deren Spaltenindex in DIESEM Eintrag
+    // tatsächlich noch eine DET-/APW-Spalte ist - sonst könnten abweichende
+    // Spaltenlayouts (andere CSV unter demselben Dateinamen) unbemerkt eine
+    // falsche Spalte zuordnen. Alte Exporte ohne assignedTracks (vor dieser
+    // Funktion) importieren dadurch einfach ohne Zuordnung - der Nutzer
+    // wählt dann neu, statt dass geraten wird.
+    const validIdxs = new Set(trackOptions(entry).map(c => c.index));
+    entry.assignedTracks = {};
+    Object.entries(saved.assignedTracks || {}).forEach(([idx, dir]) => {
+      if (validIdxs.has(Number(idx)) && (dir === 'hin' || dir === 'rev')) entry.assignedTracks[Number(idx)] = dir;
+    });
+  }
+
+  function applySavedSettings(s) {
+    els.baseStationInput.value = s.baseStation ?? 0;
+    els.dirSelect.value = s.dirMode ?? 'both';
+    els.bandQualitativeInput.checked = !!s.showQualitative;
+    els.bandOptimumInput.checked = !!s.showOptimum;
+    // Ältere Exporte kennen showPartial noch nicht - dann wie der Standard
+    // (an) statt stillschweigend aus.
+    els.bandPartialInput.checked = s.showPartial ?? true;
+    els.showTimestampInput.checked = !!s.showTimestamp;
+  }
+
+  async function exportConfig() {
+    els.btnExport.disabled = true;
+    try {
+      const nodes = [];
+      for (const n of state.intersections) {
+        nodes.push({
+          fileName: n.fileName,
+          mainColHin: n.mainColHin,
+          mainColRev: n.mainColRev,
+          distanceHin: n.distanceHin,
+          distanceRev: n.distanceRev,
+          revOffset: n.revOffset,
+          vpHin: n.vpHin,
+          vpRev: n.vpRev,
+          assignedTracks: n.assignedTracks || {},
+          pack: await App.datapack.pack(n)
+        });
+      }
+      const data = {
+        formatVersion: EXPORT_FORMAT_VERSION,
+        exportedAt: new Date().toISOString(),
+        settings: {
+          baseStation: Number(els.baseStationInput.value) || 0,
+          dirMode: els.dirSelect.value,
+          showQualitative: els.bandQualitativeInput.checked,
+          showOptimum: els.bandOptimumInput.checked,
+          showPartial: els.bandPartialInput.checked,
+          showTimestamp: els.showTimestampInput.checked
+        },
+        nodes
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `koordinierung-config-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showError(`Export fehlgeschlagen: ${e.message}`);
+    } finally {
+      els.btnExport.disabled = false;
+    }
+  }
+
+  // Import eines Exports mit Datenpaketen: baut alle Knoten zuerst
+  // vollständig auf und ersetzt den Zustand erst, wenn alle gelungen sind -
+  // ein defektes Paket lässt den bisherigen Stand unberührt.
+  async function importPacked(data) {
+    const entries = [];
+    try {
+      for (const saved of data.nodes) {
+        let parts;
+        try {
+          parts = await App.datapack.unpack(saved.pack);
+        } catch (e) {
+          throw new Error(`${saved.fileName}: ${e.message}`);
+        }
+        const entry = state.restoreIntersection(saved.fileName, parts);
+        applySavedNode(entry, saved);
+        entries.push(entry);
+      }
+    } catch (e) {
+      showError(`Import fehlgeschlagen - ${e.message}`);
+      return;
+    }
+    clearError();
+    state.clearIntersections();
+    entries.forEach(n => state.addIntersection(n));
+    if (data.settings) applySavedSettings(data.settings);
+    renderNodeList();
+    recompute();
   }
 
   els.btnExport.addEventListener('click', exportConfig);
@@ -273,6 +325,14 @@
     }
     if (!data || !Array.isArray(data.nodes)) {
       showError('Import fehlgeschlagen: Datei enthält keine gültige Koordinierung-Konfiguration.');
+      return;
+    }
+    if (data.formatVersion > EXPORT_FORMAT_VERSION) {
+      showError(`Import fehlgeschlagen: Die Datei stammt aus einer neueren Version (Format ${data.formatVersion}, unterstützt bis ${EXPORT_FORMAT_VERSION}).`);
+      return;
+    }
+    if (data.nodes.length && data.nodes.every(n => n && n.pack)) {
+      await importPacked(data);
       return;
     }
     pendingImport = data;

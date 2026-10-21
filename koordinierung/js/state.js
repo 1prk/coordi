@@ -30,17 +30,11 @@
   // app.js/planForNode.
   function buildIntersection(fileName, text) {
     const parsed = parseOcitText(text);
-    const TU = computeGlobalTU(parsed.cycleStarts);
     const segsByCol = new Map();
-    const planByCol = new Map();
     parsed.columns.forEach(col => {
-      const segs = buildSegments(parsed.times, parsed.seriesByCol.get(col.index));
-      segsByCol.set(col.index, segs);
-      const plan = TU ? computeSignalplanRow(segs, parsed.cycleStarts, TU) : null;
-      planByCol.set(col.index, plan);
+      segsByCol.set(col.index, buildSegments(parsed.times, parsed.seriesByCol.get(col.index)));
     });
     const splPeriods = computeSplPeriods(parsed.times, parsed.splValues);
-    const defaultCol = parsed.columns.find(c => planByCol.get(c.index))?.index ?? null;
 
     // Detektoren (DET): je Spalte die Wert-Segmente vorab berechnen, damit
     // sich einzelne Detektoren später im Diagramm ohne Neuberechnung
@@ -69,27 +63,61 @@
       apwSegsByCol.set(col.index, buildSegments(parsed.times, parsed.seriesByCol.get(col.index), categorizeValueRaw));
     });
 
-    return {
-      id: uid(),
-      fileName,
+    return assembleIntersection(fileName, {
       knotenName: parsed.knotenName,
       knotenNr: parsed.knotenNr,
       columns: parsed.columns,
-      planByCol,
       segsByCol,
       detColumns,
       detSegsByCol,
       apwColumns,
       apwSegsByCol,
+      times: parsed.times,
+      cycleStarts: parsed.cycleStarts,
+      splPeriods
+    });
+  }
+
+  // Aus einem Datenpaket (App.datapack.unpack, Import ohne CSV) - dieselbe
+  // Struktur wie buildIntersection, nur sind columns/detColumns/apwColumns
+  // auf das beschränkt, was der Export mitgenommen hat, und times enthält
+  // nur den ersten und letzten Zeitstempel.
+  function restoreIntersection(fileName, parts) {
+    return assembleIntersection(fileName, parts);
+  }
+
+  // Gemeinsamer Aufbau des Knoteneintrags aus bereits segmentierten Daten:
+  // leitet Umlaufzeit, Signalplan je Spalte (planByCol) und die Standard-
+  // Hauptsignal-Wahl ab. Beide Wege (CSV und Datenpaket) laufen hier durch,
+  // damit die abgeleiteten Werte identisch berechnet werden.
+  function assembleIntersection(fileName, p) {
+    const TU = computeGlobalTU(p.cycleStarts);
+    const planByCol = new Map();
+    p.columns.forEach(col => {
+      planByCol.set(col.index, TU ? computeSignalplanRow(p.segsByCol.get(col.index), p.cycleStarts, TU) : null);
+    });
+    const defaultCol = p.columns.find(c => planByCol.get(c.index))?.index ?? null;
+    return {
+      id: uid(),
+      fileName,
+      knotenName: p.knotenName,
+      knotenNr: p.knotenNr,
+      columns: p.columns,
+      planByCol,
+      segsByCol: p.segsByCol,
+      detColumns: p.detColumns,
+      detSegsByCol: p.detSegsByCol,
+      apwColumns: p.apwColumns,
+      apwSegsByCol: p.apwSegsByCol,
       // Zuordnung DET-/APW-Spalte -> Signalgruppe: { [Spaltenindex]: 'hin' |
       // 'rev' }, vom Nutzer je Signalgruppe vergeben (siehe Setup-Tab). Strikt
       // 1:1 - eine Spalte fehlt hier, wenn sie keiner Richtung zugeordnet ist,
       // und kann nie beiden Richtungen gleichzeitig zugeordnet sein (siehe
       // app.js renderNodeList()/trackPickerHtml).
       assignedTracks: {},
-      times: parsed.times,
-      cycleStarts: parsed.cycleStarts,
-      splPeriods,
+      times: p.times,
+      cycleStarts: p.cycleStarts,
+      splPeriods: p.splPeriods,
       TU,
       mainColHin: defaultCol,
       mainColRev: defaultCol,
@@ -122,7 +150,7 @@
   function clearIntersections() { intersections.length = 0; }
 
   App.state = {
-    intersections, buildIntersection, addIntersection, removeIntersection, moveIntersection,
+    intersections, buildIntersection, restoreIntersection, addIntersection, removeIntersection, moveIntersection,
     clearIntersections
   };
 })(window.App = window.App || {});

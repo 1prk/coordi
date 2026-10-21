@@ -19,8 +19,8 @@
     <a href="#" class="nav-tab-link" data-tab="diagram">Diagramm</a>
     <a href="#" class="nav-tab-link" data-tab="stats">Statistik</a>
     <div class="nav-actions">
-      <button type="button" class="btn btn-secondary" id="btnExport" title="Aktuelle Einstellungen (Abstände, V_p, Dateinamen usw.) als JSON-Datei speichern - referenziert die CSV-Dateien nur per Dateiname, ohne deren Inhalt">Export</button>
-      <button type="button" class="btn btn-secondary" id="btnImport" title="Einstellungen aus einer zuvor exportierten JSON-Datei laden - fragt danach nach denselben CSV-Dateien erneut">Import</button>
+      <button type="button" class="btn btn-secondary" id="btnExport" title="Einstellungen (Abstände, V_p, Zuordnungen usw.) plus die nötigen Daten als JSON-Datei speichern: gewählte Hauptsignale und alle DET/APW, komprimiert - die übrigen Signalgruppen entfallen. Der Import braucht dann keine CSV mehr.">Export</button>
+      <button type="button" class="btn btn-secondary" id="btnImport" title="Eine zuvor exportierte JSON-Datei laden. Exporte mit Daten stellen alles ohne CSV wieder her; ältere Exporte (nur Einstellungen) fragen danach nach denselben CSV-Dateien.">Import</button>
       <input type="file" id="importInput" accept=".json" style="display:none;">
     </div>
   </div>
@@ -218,6 +218,7 @@
 <script src="js/parser.js"></script>
 <script src="js/coordination.js"></script>
 <script src="js/xlsx-writer.js"></script>
+<script src="js/datapack.js"></script>
 <script src="lib/d3.v7.min.js"></script>
 <script src="js/diagram.js"></script>
 <script src="js/state.js"></script>
