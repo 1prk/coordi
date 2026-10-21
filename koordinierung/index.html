@@ -111,7 +111,7 @@
             <span class="item"><span class="swatch" style="background:rgba(0,168,200,.22);border:1px dashed #00a8c8;"></span>Optimum unvollständig (R)</span>
           </div>
           <div class="diagram-wrap" id="diagram"></div>
-          <div class="panel-note">Optimum vollständig = der Umlauf erreicht durchgehend Grün bis zum letzten Knoten. Optimum unvollständig = der Umlauf kommt nur bis zu einem Zwischenknoten durch (gestrichelt); der blasse Abschnitt dahinter zeigt, wo das Band auf Rot trifft - dieselben Umläufe wie „Gescheitert" in Umlaufübersicht und Koordinationsstatistik.</div>
+          <div class="panel-note">Optimum vollständig = der Umlauf erreicht durchgehend Grün bis zum letzten Knoten. Optimum unvollständig = der Umlauf kommt nur bis zu einem Zwischenknoten durch (gestrichelt); der blasse Abschnitt dahinter zeigt, wo das Band auf Rot trifft - das sind die Umläufe mit „Teilweise" oder „Nein" in der Umlaufübersicht (bei „Nein" nur der blasse Abschnitt am ersten Folgeknoten).</div>
         </div>
 
         <div class="card elev-md panel-card umlauf-col" id="umlaufPanel" style="display:none;">
@@ -120,8 +120,9 @@
               <h3>Umlaufübersicht</h3>
               <span class="seg" id="umlaufFilterSeg">
                 <label class="seg-opt"><input type="radio" name="umlaufFilter" value="all" checked> Alle</label>
-                <label class="seg-opt"><input type="radio" name="umlaufFilter" value="ja"> Durchfahrt</label>
-                <label class="seg-opt"><input type="radio" name="umlaufFilter" value="nein"> Gescheitert</label>
+                <label class="seg-opt"><input type="radio" name="umlaufFilter" value="ja"> Ja</label>
+                <label class="seg-opt"><input type="radio" name="umlaufFilter" value="teilweise"> Teilweise</label>
+                <label class="seg-opt"><input type="radio" name="umlaufFilter" value="nein"> Nein</label>
               </span>
               <button type="button" class="btn btn-secondary" id="btnExportUmlauf" title="Alle Umläufe (ungefiltert) inkl. Durchfahrt/Bandbreite je LSA als XLSX exportieren">XLSX exportieren</button>
             </div>
@@ -137,7 +138,7 @@
                 <tbody id="umlaufBody"></tbody>
               </table>
             </div>
-            <div class="panel-note">Zeile anklicken springt im Diagramm zum Umlaufbeginn. Durchfahrt = der reale Umlauf erreicht durchgehend Grün bis zum letzten Knoten (auch mit einer schmaleren als der Engpass-Bandbreite).</div>
+            <div class="panel-note">Zeile anklicken springt im Diagramm zum Umlaufbeginn. Durchfahrt: Ja = der reale Umlauf erreicht durchgehend Grün bis zum letzten Knoten (auch mit einer schmaleren als der Engpass-Bandbreite) · Teilweise = nur bis zu einem Zwischenknoten · Nein = schon der erste Folgeknoten wird nicht durchgehend erreicht. Bei Teilweise/Nein nennt der Tooltip den Knoten, an dem der Umlauf scheitert.</div>
           </div>
         </div>
       </div>

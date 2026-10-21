@@ -321,6 +321,11 @@
       return {
         start: start0.segStart, end: start0.segEnd,
         success,
+        // 'ja' = durchgehend bis zum letzten Knoten, 'teilweise' = mindestens
+        // den ersten Folgeknoten, aber nicht den letzten, 'nein' = schon der
+        // erste Folgeknoten wird nicht durchgehend erreicht. 'teilweise' und
+        // 'nein' sind zusammen genau die gescheiterten Umläufe (partial).
+        outcome: success ? 'ja' : (survivedIdx > 0 ? 'teilweise' : 'nein'),
         failedAt: success ? null : ordered[survivedIdx + 1],
         finalWidth: success ? lastWidth : null,
         durchfahrten: survivedIdx,

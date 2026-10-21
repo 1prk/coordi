@@ -889,10 +889,14 @@
   // computeOptimumBand()'s realStages-Kette) - Klick
   // springt im Zeit-Weg-Diagramm direkt zu diesem Zeitpunkt. Umlauf-Nummer =
   // Index innerhalb der (ungefilterten) Zykluskette der jeweiligen Richtung.
-  // Der Segment-Filter im Panel-Kopf (Alle/Durchfahrt/Gescheitert) grenzt auf
-  // umlaufFilter ein. Bei sehr langen Aufzeichnungen wird die gefilterte
-  // Liste je Richtung gekappt (Performance), mit Hinweis auf die Anzahl
-  // ausgeblendeter Umläufe.
+  // Durchfahrt je Umlauf in drei Stufen (cycle.outcome, siehe
+  // computeOptimumBand): Ja / Teilweise (nur bis zu einem Zwischenknoten) /
+  // Nein (schon der erste Folgeknoten wird verfehlt). Der Segment-Filter im
+  // Panel-Kopf (Alle/Ja/Teilweise/Nein) grenzt auf umlaufFilter ein. Bei
+  // sehr langen Aufzeichnungen wird die gefilterte Liste je Richtung gekappt
+  // (Performance), mit Hinweis auf die Anzahl ausgeblendeter Umläufe.
+  const OUTCOME_LABEL = { ja: 'Ja', teilweise: 'Teilweise', nein: 'Nein' };
+  const OUTCOME_CLS = { ja: 'stat-ok', teilweise: 'stat-warn', nein: 'stat-bad' };
   const UMLAUF_TABLE_MAX = 500;
   function renderUmlaufTable(resHin, resRev) {
     const filterValue = umlaufFilter;
@@ -906,18 +910,22 @@
       const cycles = res.optimumBand.cycles;
       const filtered = cycles
         .map((c, i) => ({ c, i }))
-        .filter(({ c }) => filterValue === 'all' || (filterValue === 'ja' ? c.success : !c.success));
+        .filter(({ c }) => filterValue === 'all' || c.outcome === filterValue);
       const shown = filtered.slice(0, UMLAUF_TABLE_MAX);
       if (dirs.length > 1) {
         rows.push(`<tr class="stats-dir-row"><td colspan="5" style="color:${color}">${esc(label)} (${filtered.length} von ${cycles.length} Umläufen${filtered.length > UMLAUF_TABLE_MAX ? `, erste ${UMLAUF_TABLE_MAX} angezeigt` : ''})</td></tr>`);
       }
       shown.forEach(({ c, i }) => {
-        const durchfahrtCls = c.success ? 'stat-ok' : 'stat-bad';
+        // Tooltip: bis wohin der Umlauf durchkam und wo er scheitert.
+        const ordered = res.optimumBand.ordered;
+        const hint = c.success ? '' : (c.outcome === 'teilweise'
+          ? `durchgehend bis ${ordered[c.partial.reachedIdx].name}, scheitert an ${c.failedAt.name}`
+          : `scheitert schon am ersten Folgeknoten ${c.failedAt.name}`);
         rows.push(`<tr class="cycle-jump-row" data-t="${c.start}" tabindex="0">
           <td>Umlauf ${i}</td>
           <td>${esc(fmtDateTimeShort(c.start))}</td>
           <td>${esc(fmtDateTimeShort(c.end))}</td>
-          <td class="${durchfahrtCls}">${c.success ? 'Ja' : 'Nein'}</td>
+          <td class="${OUTCOME_CLS[c.outcome]}"${hint ? ` title="${esc(hint)}"` : ''}>${OUTCOME_LABEL[c.outcome]}</td>
           <td>${c.success ? `${c.finalWidth} s` : '–'}</td>
         </tr>`);
       });
@@ -965,7 +973,7 @@
       stations.forEach(n => header.push(`${n.name} erreicht`, `${n.name} Breite (s)`));
       const rows = [header];
       res.optimumBand.cycles.forEach((c, i) => {
-        const row = [i, fmtDateTimeFull(c.start), fmtDateTimeFull(c.end), c.success ? 'Ja' : 'Nein', c.success ? c.finalWidth : null];
+        const row = [i, fmtDateTimeFull(c.start), fmtDateTimeFull(c.end), OUTCOME_LABEL[c.outcome], c.success ? c.finalWidth : null];
         c.stations.forEach(st => row.push(st.reached ? 'Ja' : 'Nein', st.width));
         rows.push(row);
       });
