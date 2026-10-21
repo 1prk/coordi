@@ -10,12 +10,6 @@
   // erlaubt Sprünge zu einem bestimmten Zeitpunkt aus der Umlaufübersicht
   // heraus, ohne dass der Diagramm-Code selbst vom App-Code wissen muss.
   let diagramApi = null;
-  // Dasselbe für den D3-Diagramm-Prototyp (eigener Tab, eigenes Modul
-  // js/diagram-d3.js) - identisches Interaktionsmodell wie das klassische
-  // Diagramm (natives Scrollen/Mausrad durch die Zeit, eigener zoomLevel für
-  // Strg+Mausrad/Zoom-Buttons), daher auch eine eigene API-Variable analog
-  // zu diagramApi statt einer d3-zoom-eigenen Lösung.
-  let diagramD3Api = null;
 
   // Letztes recompute()-Ergebnis je Richtung - für die XLSX-Exportbuttons
   // (Umlaufübersicht/Koordinationsstatistik), die außerhalb von recompute()
@@ -33,19 +27,9 @@
     zoomLevel = clamp(next, ZOOM_MIN, ZOOM_MAX);
     recompute();
   }
-  // Eigener Zoom-Zustand für das D3-Diagramm (unabhängig vom klassischen
-  // Diagramm - beide Tabs können unterschiedlich weit gezoomt sein).
-  let zoomLevelD3 = 1;
-  function setZoomD3(next) {
-    zoomLevelD3 = clamp(next, ZOOM_MIN, ZOOM_MAX);
-    recompute();
-  }
-
-  // Filter der Umlaufübersicht-Tabelle (unterhalb des klassischen Diagramms).
+  // Filter der Umlaufübersicht-Tabelle (neben dem Diagramm).
   // 'all' | 'ja' (nur durchgefahrene Umläufe) | 'nein' (nur gescheiterte).
   let umlaufFilter = 'all';
-  // Dasselbe für die (unabhängige) Umlaufübersicht neben dem D3-Diagramm.
-  let umlaufFilterD3 = 'all';
 
   // Aktiver Tab: 'setup' | 'diagram' | 'stats'. Start bei 'setup', da die App
   // (anders als die Referenz) ohne vorgeladene Beispieldaten startet - ein
@@ -56,17 +40,7 @@
     tabLinks: document.querySelectorAll('.nav-tab-link'),
     tabSetup: document.getElementById('tabSetup'),
     tabDiagram: document.getElementById('tabDiagram'),
-    tabD3Diagram: document.getElementById('tabD3Diagram'),
     tabStats: document.getElementById('tabStats'),
-    d3Panel: document.getElementById('d3Panel'),
-    d3Diagram: document.getElementById('d3Diagram'),
-    d3ZoomOutBtn: document.getElementById('d3ZoomOutBtn'),
-    d3ZoomResetBtn: document.getElementById('d3ZoomResetBtn'),
-    d3ZoomInBtn: document.getElementById('d3ZoomInBtn'),
-    d3ZoomLabel: document.getElementById('d3ZoomLabel'),
-    d3UmlaufPanel: document.getElementById('d3UmlaufPanel'),
-    d3UmlaufBody: document.getElementById('d3UmlaufBody'),
-    d3UmlaufFilterSeg: document.getElementById('d3UmlaufFilterSeg'),
     btnAddFile: document.getElementById('btnAddFile'),
     fileInput: document.getElementById('fileInput'),
     btnExport: document.getElementById('btnExport'),
@@ -75,6 +49,7 @@
     dirSelect: document.getElementById('dirSelect'),
     bandQualitativeInput: document.getElementById('bandQualitativeInput'),
     bandOptimumInput: document.getElementById('bandOptimumInput'),
+    bandPartialInput: document.getElementById('bandPartialInput'),
     baseStationInput: document.getElementById('baseStationInput'),
     showTimestampInput: document.getElementById('showTimestampInput'),
     errorBox: document.getElementById('errorBox'),
@@ -101,7 +76,6 @@
     umlaufBody: document.getElementById('umlaufBody'),
     umlaufFilterSeg: document.getElementById('umlaufFilterSeg'),
     btnExportUmlauf: document.getElementById('btnExportUmlauf'),
-    d3BtnExportUmlauf: document.getElementById('d3BtnExportUmlauf'),
     zoomOutBtn: document.getElementById('zoomOutBtn'),
     zoomResetBtn: document.getElementById('zoomResetBtn'),
     zoomInBtn: document.getElementById('zoomInBtn'),
@@ -127,12 +101,10 @@
     els.statsPanel.style.display = 'none';
     els.umlaufPanel.style.display = 'none';
     els.kmPanel.style.display = 'none';
-    els.d3Panel.style.display = 'none';
-    els.d3UmlaufPanel.style.display = 'none';
   }
 
-  /* ---------------- Tabs (Setup / Diagramm / Diagramm (D3) / Statistik) ---------------- */
-  const TAB_CONTENT = { setup: els.tabSetup, diagram: els.tabDiagram, d3diagram: els.tabD3Diagram, stats: els.tabStats };
+  /* ---------------- Tabs (Setup / Diagramm / Statistik) ---------------- */
+  const TAB_CONTENT = { setup: els.tabSetup, diagram: els.tabDiagram, stats: els.tabStats };
   function setTab(tab) {
     currentTab = tab;
     Object.keys(TAB_CONTENT).forEach(t => { TAB_CONTENT[t].style.display = t === tab ? '' : 'none'; });
@@ -140,11 +112,11 @@
       if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
-    // Beide Diagramme messen beim Rendern die Breite ihres Containers -
-    // während ihr Tab per display:none verborgen ist, liefert das 0
-    // (Fallback auf eine feste Breite). Ein Wechsel auf den jeweiligen Tab
-    // macht den Container erst sichtbar, daher hier neu rendern.
-    if (tab === 'diagram' || tab === 'd3diagram') recompute();
+    // Das Diagramm misst beim Rendern die Breite seines Containers - während
+    // der Tab per display:none verborgen ist, liefert das 0 (Fallback auf
+    // eine feste Breite). Ein Wechsel auf den Tab macht den Container erst
+    // sichtbar, daher hier neu rendern.
+    if (tab === 'diagram') recompute();
   }
   els.tabLinks.forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); setTab(a.dataset.tab); }));
 
@@ -219,6 +191,9 @@
         els.dirSelect.value = importCtx.settings.dirMode ?? 'both';
         els.bandQualitativeInput.checked = !!importCtx.settings.showQualitative;
         els.bandOptimumInput.checked = !!importCtx.settings.showOptimum;
+        // Ältere Exporte kennen showPartial noch nicht - dann wie der
+        // Standard (an) statt stillschweigend aus.
+        els.bandPartialInput.checked = importCtx.settings.showPartial ?? true;
         els.showTimestampInput.checked = !!importCtx.settings.showTimestamp;
       }
       const missing = orderedNames.filter(fn => !reordered.some(n => n.fileName === fn));
@@ -256,6 +231,7 @@
         dirMode: els.dirSelect.value,
         showQualitative: els.bandQualitativeInput.checked,
         showOptimum: els.bandOptimumInput.checked,
+        showPartial: els.bandPartialInput.checked,
         showTimestamp: els.showTimestampInput.checked
       },
       nodes: state.intersections.map(n => ({
@@ -671,8 +647,6 @@
 
     els.kpiPanel.style.display = 'block';
     els.diagramPanel.style.display = 'block';
-    els.d3Panel.style.display = 'block';
-    els.d3UmlaufPanel.style.display = 'block';
     els.tablePanel.style.display = 'block';
     els.kmPanel.style.display = 'block';
 
@@ -716,6 +690,7 @@
     /* ---- Diagramm ---- */
     const showQualitative = els.bandQualitativeInput.checked;
     const showOptimum = els.bandOptimumInput.checked;
+    const showPartial = els.bandPartialInput.checked;
     const showTimestamp = els.showTimestampInput.checked;
     const TU = resHin.ok ? resHin.TU : resRev.TU;
     const toDirGeom = (res, tag, tagColor, gridColor) => res.ok ? {
@@ -729,7 +704,7 @@
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
-    diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showTimestamp, zoomLevel, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showPartial, showTimestamp, zoomLevel, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
     els.zoomLabel.textContent = Math.round(zoomLevel * 100) + ' %';
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
@@ -737,14 +712,11 @@
     const durH = ((globalTMax - globalTMin) / 3600000).toFixed(1);
     els.diagramInfo.textContent = `${parts.join(' · ')} · gesamte Historie (${durH} h)`;
 
-    diagramD3Api = App.diagramD3.renderDiagram(els.d3Diagram, { TU, showQualitative, showOptimum, showTimestamp, zoomLevel: zoomLevelD3, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
-    els.d3ZoomLabel.textContent = Math.round(zoomLevelD3 * 100) + ' %';
 
     /* ---- Koordinationsstatistik ---- */
     renderKm(resHin, resRev);
     renderStats(resHin, resRev);
-    renderUmlaufTable(resHin, resRev, umlaufFilter, els.umlaufPanel, els.umlaufBody);
-    renderUmlaufTable(resHin, resRev, umlaufFilterD3, els.d3UmlaufPanel, els.d3UmlaufBody);
+    renderUmlaufTable(resHin, resRev);
 
     /* ---- Tabelle (eine Zeile je Knotenkarte, Hin/Rück nebeneinander) ---- */
     const nodes = state.intersections;
@@ -922,11 +894,9 @@
   // Liste je Richtung gekappt (Performance), mit Hinweis auf die Anzahl
   // ausgeblendeter Umläufe.
   const UMLAUF_TABLE_MAX = 500;
-  // panelEl/bodyEl/filterValue parametrisiert, damit dieselbe Tabelle sowohl
-  // neben dem klassischen als auch neben dem D3-Diagramm gerendert werden
-  // kann (siehe die beiden Aufrufe in recompute()) - jede Instanz hat ihren
-  // eigenen Filter-Zustand (umlaufFilter / umlaufFilterD3).
-  function renderUmlaufTable(resHin, resRev, filterValue, panelEl, bodyEl) {
+  function renderUmlaufTable(resHin, resRev) {
+    const filterValue = umlaufFilter;
+    const panelEl = els.umlaufPanel, bodyEl = els.umlaufBody;
     const dirs = [['Hinrichtung', resHin, '#8a5a00'], ['Gegenrichtung', resRev, '#2b6ca3']]
       .filter(([, res]) => res.ok && res.optimumBand && res.optimumBand.cycles.length);
     if (dirs.length === 0) { panelEl.style.display = 'none'; return; }
@@ -972,7 +942,6 @@
     });
   }
   wireUmlaufJump(els.umlaufBody, () => diagramApi);
-  wireUmlaufJump(els.d3UmlaufBody, () => diagramD3Api);
 
   function fmtDateTimeFull(ms) {
     const d = new Date(ms);
@@ -1006,16 +975,10 @@
     App.xlsxWriter.download(`umlaufuebersicht-${ts}.xlsx`, sheets);
   }
   els.btnExportUmlauf.addEventListener('click', exportUmlaufXlsx);
-  els.d3BtnExportUmlauf.addEventListener('click', exportUmlaufXlsx);
 
   els.umlaufFilterSeg.addEventListener('change', (e) => {
     if (e.target.name !== 'umlaufFilter') return;
     umlaufFilter = e.target.value;
-    recompute();
-  });
-  els.d3UmlaufFilterSeg.addEventListener('change', (e) => {
-    if (e.target.name !== 'd3UmlaufFilter') return;
-    umlaufFilterD3 = e.target.value;
     recompute();
   });
 
@@ -1023,9 +986,6 @@
   els.zoomOutBtn.addEventListener('click', () => setZoom(zoomLevel / ZOOM_STEP));
   els.zoomInBtn.addEventListener('click', () => setZoom(zoomLevel * ZOOM_STEP));
   els.zoomResetBtn.addEventListener('click', () => setZoom(1));
-  els.d3ZoomOutBtn.addEventListener('click', () => setZoomD3(zoomLevelD3 / ZOOM_STEP));
-  els.d3ZoomInBtn.addEventListener('click', () => setZoomD3(zoomLevelD3 * ZOOM_STEP));
-  els.d3ZoomResetBtn.addEventListener('click', () => setZoomD3(1));
 
   // Strg/Cmd+Mausrad über dem Diagramm zoomt interaktiv in die Zeitachse
   // hinein/heraus (wie in Karten-/Grafikwerkzeugen üblich) - normales
@@ -1048,9 +1008,8 @@
     }, { passive: false });
   }
   wireWheelZoom(els.diagram, () => zoomLevel, setZoom);
-  wireWheelZoom(els.d3Diagram, () => zoomLevelD3, setZoomD3);
 
-  [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.baseStationInput, els.showTimestampInput].forEach(el => el.addEventListener('change', recompute));
+  [els.dirSelect, els.bandQualitativeInput, els.bandOptimumInput, els.bandPartialInput, els.baseStationInput, els.showTimestampInput].forEach(el => el.addEventListener('change', recompute));
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {

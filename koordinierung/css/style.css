@@ -26,8 +26,8 @@
 html, body { margin: 0; padding: 0; }
 .app { min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); display: flex; flex-direction: column; }
 .main { flex: 1; padding: var(--space-6) var(--space-4) var(--space-8); width: 100%; box-sizing: border-box; }
-/* Lesebreite (1400px) gilt je Tab, nicht global - der D3-Diagramm-Tab lässt
-   sich davon bewusst aus (siehe .d3-diagram-row), damit das Diagramm neben
+/* Lesebreite (1400px) gilt je Tab, nicht global - der Diagramm-Tab lässt
+   sich davon bewusst aus (siehe .diagram-row), damit das Diagramm neben
    der Umlaufübersicht seine Breite behält statt gequetscht zu werden. */
 .tab-narrow { max-width: 1400px; margin: 0 auto; }
 
@@ -118,14 +118,24 @@ html, body { margin: 0; padding: 0; }
 .km-band .kpi-grid { margin-bottom: 0; }
 .km-band .kpi .k-sub.stat-ok, .km-band .kpi .k-sub.stat-warn, .km-band .kpi .k-sub.stat-bad { font-weight: 700; }
 
-/* — D3-Diagramm-Tab: Diagramm links, Umlaufübersicht rechts daneben — */
-.d3-diagram-row { display: flex; gap: var(--space-4); align-items: flex-start; }
-.d3-diagram-col { flex: 1 1 auto; min-width: 0; }
-.d3-umlauf-col { flex: 0 0 460px; }
-.d3-umlauf-scroll { max-height: 616px; }
+/* — Diagramm-Tab: Diagramm links, Umlaufübersicht rechts daneben — */
+.diagram-row { display: flex; gap: var(--space-4); align-items: stretch; }
+.diagram-col { flex: 1 1 auto; min-width: 0; }
+/* Die Umlaufübersicht ist genau so hoch wie die Diagramm-Karte: contain: size
+   nimmt ihren eigenen Inhalt aus der Höhenberechnung der Zeile heraus (die
+   gibt allein das Diagramm vor), align-items: stretch füllt die Karte dann
+   auf diese Zeilenhöhe auf, und die Tabelle scrollt innerhalb davon
+   (.umlauf-fill), statt die Karte in die Länge zu ziehen. */
+.umlauf-col { flex: 0 0 460px; contain: size; }
+.umlauf-fill { display: flex; flex-direction: column; height: 100%; }
+.umlauf-fill .table-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
 @media (max-width: 1100px) {
-  .d3-diagram-row { flex-direction: column; }
-  .d3-umlauf-col { flex-basis: auto; width: 100%; }
+  /* Untereinander gibt es keine Nachbarhöhe, an der sich die Tabelle
+     ausrichten könnte - dort wächst sie mit ihrem Inhalt bis zu einer Obergrenze. */
+  .diagram-row { flex-direction: column; }
+  .umlauf-col { flex-basis: auto; width: 100%; contain: none; }
+  .umlauf-fill { height: auto; }
+  .umlauf-fill .table-scroll { max-height: 480px; }
 }
 
 /* — panel cards (diagram / umlauf / stats / corridor table) — */
@@ -175,6 +185,8 @@ html, body { margin: 0; padding: 0; }
 .stat-bad { color: var(--sig-red); font-weight: 700; }
 
 .cycle-jump-scroll { max-height: 360px; overflow-y: auto; }
+/* Kopfzeile bleibt beim Scrollen durch die Umläufe stehen. */
+.cycle-jump-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }
 .cycle-jump-row { cursor: pointer; }
 .cycle-jump-row:hover, .cycle-jump-row:focus { background: color-mix(in srgb, var(--color-text) 5%, transparent); outline: none; }
 

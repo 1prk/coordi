@@ -269,7 +269,10 @@
         assertWithinRealGreen(ordered[i], run.backStart, run.backEnd, 'Zielseite');
       });
 
-      segments.push({ a: ordered[i - 1], b: ordered[i], runs, vp_kmh: Number(vpKmhArray[i - 1]) });
+      // partialRuns: Bänder der unvollständig koordinierten Umläufe (siehe
+      // unten, nach der Umlauf-Auswertung) - hier nur angelegt, damit jedes
+      // Segment die Liste auch ohne gescheiterte Umläufe führt.
+      segments.push({ a: ordered[i - 1], b: ordered[i], runs, partialRuns: [], vp_kmh: Number(vpKmhArray[i - 1]) });
 
       const entering = realStages[i - 1].length, surviving = realStages[i].length;
       perStation.push({
@@ -298,15 +301,21 @@
     // ohnehin nie einen Treffer enthalten (realStages führt nur Origins
     // fort, die die vorherige Stufe überlebt haben) - .find() liefert dort
     // also von selbst "nicht erreicht".
+    // partial (nur gescheiterte Umläufe): das real durchgehende Fenster auf
+    // der letzten erreichten Stufe (lastIv - bei 0 erreichten Folgeknoten
+    // das Ursprungsfenster selbst), zurückgerechnet auf den Nullpunkt wie
+    // survivorAnchors oben - Grundlage für die Bänder der unvollständigen
+    // Koordinierung (siehe partialRuns unten).
     const cycles = realStages[0].map(start0 => {
       let survivedIdx = 0;
       let lastWidth = null;
+      let lastIv = start0;
       const stations = [];
       for (let s = 1; s < realStages.length; s++) {
         const found = realStages[s].find(iv => iv.origin === start0.origin);
         const width = found ? Math.round((found.end - found.start) / 1000) : null;
         stations.push({ node: ordered[s], reached: !!found, width });
-        if (found) { survivedIdx = s; lastWidth = width; }
+        if (found) { survivedIdx = s; lastWidth = width; lastIv = found; }
       }
       const success = survivedIdx === realStages.length - 1;
       return {
@@ -315,8 +324,43 @@
         failedAt: success ? null : ordered[survivedIdx + 1],
         finalWidth: success ? lastWidth : null,
         durchfahrten: survivedIdx,
+        partial: success ? null : {
+          reachedIdx: survivedIdx,
+          s0: lastIv.start - tau[survivedIdx] * 1000,
+          widthMs: lastIv.end - lastIv.start
+        },
         stations
       };
+    });
+
+    // Unvollständige Koordinierung: ein gescheiterter Umlauf kam durchgehend
+    // bis zum Knoten reachedIdx (also über reachedIdx Abschnitte) - sein Band
+    // wird wie beim vollständigen Optimum als konstant breites Parallelogramm
+    // über diese Abschnitte gezeichnet (an jeder der Stationen davor liegt es
+    // per Konstruktion im realen Grün, siehe assertWithinRealGreen). Dazu
+    // kommt eine Verlängerung um EINEN weiteren Abschnitt (blocked) bis zum
+    // Knoten, an dem das Band nicht mehr in reales Grün passt - sie zeigt,
+    // wo genau die Koordinierung abreißt, und deckt auch Umläufe ab, die
+    // schon den ersten Folgeknoten verfehlen (reachedIdx 0: nur die
+    // Verlängerung, kein durchgehender Abschnitt). Konsistent zur
+    // Koordinationsstatistik (perStation) und zur Umlaufübersicht: dieselben
+    // Umläufe, dieselbe Station des Scheiterns.
+    cycles.forEach((c, cycleIdx) => {
+      if (c.success) return;
+      const p = c.partial;
+      for (let i = 1; i <= p.reachedIdx + 1; i++) {
+        const blocked = i > p.reachedIdx;
+        const frontStart = p.s0 + tau[i - 1] * 1000, backStart = p.s0 + tau[i] * 1000;
+        const run = {
+          cycleIdx, blocked,
+          frontStart, frontEnd: frontStart + p.widthMs,
+          backStart, backEnd: backStart + p.widthMs,
+          reachedNode: ordered[p.reachedIdx], failedAt: c.failedAt
+        };
+        assertWithinRealGreen(ordered[i - 1], run.frontStart, run.frontEnd, `Startseite, Umlauf ${cycleIdx} (unvollständig)`);
+        if (!blocked) assertWithinRealGreen(ordered[i], run.backStart, run.backEnd, `Zielseite, Umlauf ${cycleIdx} (unvollständig)`);
+        segments[i - 1].partialRuns.push(run);
+      }
     });
 
     return { ordered, tau, minTf, segments, perStation, overall, cycles };
