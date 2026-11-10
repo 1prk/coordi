@@ -7,7 +7,10 @@
 
    Rules for each follower in each time step (parallel update, all cars use
    the state at the start of the step):
-   1. Acceleration: v = min(v + aCells, vMax).
+   1. Acceleration: v = min(v + inc, vMax). The increment inc follows the
+      acceleration model of the car (see below) and is a whole number of
+      cells. A fraction is rounded up with the probability of the fraction
+      (stochastic rounding). So the mean acceleration is exact.
    2. Braking: the car must not drive into the car ahead or into a red stop
       line. Hard limit: v <= gap (classic NaSch rule). Comfort limit: v is
       also limited so the car can stop with the deceleration b. The comfort
@@ -22,9 +25,18 @@
    (dilemma zone). A signal is green from the start of a real green window to
    its end plus the yellow tolerance.
 
+   Acceleration model (params.accelProfile, see vehicle.js): 'linear' =
+   a(v) = a0 * (1 - v / vl), highest at standstill and falling with the
+   speed (Drew 1968; Long 2000). 'constant' = a(v) = a. Each follower has its
+   own driver factor f = 1 + sigma * z, where z is a normal random number
+   cut at +-2. The factor scales the acceleration of that driver for the whole
+   run. sigma = 0.13 follows the driver reduction factor of the Virginia Tech
+   vehicle dynamics model (normal distribution, mean 0.60, sd 0.08, so 13 %
+   relative spread). The lead vehicle has the nominal factor 1.
+
    Units: the cell length is set so that an acceleration of one cell per step
-   is the acceleration of the user (cell = a * 1 s * 1 s). The speed grid is
-   then a * 1 s. Target speeds are rounded to this grid. This model is
+   is the MEAN acceleration of the user (cell = a * 1 s * 1 s). The speed grid
+   is then a * 1 s. Target speeds are rounded to this grid. This model is
    experimental. Results are one random sample. Use runBatch for statistics.
 
    Sources of the method (checked by web search; the original papers could
@@ -53,7 +65,7 @@
   // discharges with a steady headway of about 2.0 s per vehicle (HCM ideal
   // saturation flow 1800 veh/h/lane). Without randomization the headway
   // would be 1.6 s (too fast). With p = 0.05 and p0 = 0.2 it is 2.0 s.
-  const DEFAULTS = { p: 0.05, p0: 0.2, nCars: 8, seed: 1 };
+  const DEFAULTS = { p: 0.05, p0: 0.2, nCars: 8, seed: 1, sigma: 0.13 };
 
   // Random number generator with a seed (same seed = same result).
   function mulberry32(seed) {
@@ -75,6 +87,16 @@
     return m > 0 ? m * v - b * m * (m + 1) / 2 : 0;
   }
 
+  // Acceleration of one car in whole cells for this step. The model gives the
+  // acceleration in m/s2 for the current speed. A fraction of a cell is
+  // rounded up with the probability of the fraction (stochastic rounding),
+  // so the mean over many steps is exactly the model acceleration.
+  function accelIncrement(model, vCells, cell, dtS, rand) {
+    const x = App.vehicle.accelAt(model, vCells * cell / dtS) * dtS * dtS / cell;
+    const whole = Math.floor(x);
+    return rand() < x - whole ? whole + 1 : whole;
+  }
+
   // Largest speed w (0..wMax) so that the car moves w cells now and can still
   // stop within the budget (cells) with the deceleration b.
   function safeSpeed(budget, b, wMax) {
@@ -87,8 +109,8 @@
   // input:
   //   nodes, startIdx, tGreenStart: as for App.vehicle.simulate.
   //   lead: result of App.vehicle.simulate (the deterministic lead vehicle).
-  //   params: { accel, decel, yellowTolS, targetKmh, nCars (lead + followers),
-  //             p, p0, seed }
+  //   params: { accel (mean), accelProfile, decel, yellowTolS, targetKmh,
+  //             nCars (lead + followers), p, p0, sigma (driver spread), seed }
   //   keepTrace: false = no point lists (used by runBatch).
   function simulate(input) {
     const { nodes, startIdx, tGreenStart, lead, params } = input;
@@ -104,7 +126,6 @@
 
     // Grid: one cell per step of acceleration = the acceleration of the user.
     const cell = Math.min(3, Math.max(0.5, params.accel * dtS * dtS));
-    const aCells = Math.max(1, Math.round(params.accel * dtS * dtS / cell));
     const bCells = Math.max(1, Math.round(params.decel * dtS * dtS / cell));
     const lenCells = Math.max(1, Math.round(VEH_LEN_M / cell));
     const sign = lead.sign;
@@ -118,6 +139,14 @@
     };
     const vMaxCells = [];
     for (let j = startIdx; j < N - 1; j++) vMaxCells[j] = Math.max(1, Math.round(targetMs(j) * dtS / cell));
+    // Acceleration model and driver factor of each follower.
+    let vTargetMax = 0;
+    for (let j = startIdx; j < N - 1; j++) vTargetMax = Math.max(vTargetMax, targetMs(j));
+    const sigma = Math.max(0, Number(params.sigma) || 0);
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+    const nominal = App.vehicle.makeAccelModel(params, vTargetMax, 1);
+    const factors = [];
+    for (let i = 0; i < nF; i++) factors.push(1 + sigma * Math.max(-2, Math.min(2, gauss())));
     const lineX = nodes.map((n, j) => (j < startIdx ? -Infinity : Math.floor(Math.abs(n.station - station0) / cell + 1e-9)));
     const lastLine = lineX[N - 1];
     const exitX = lastLine + Math.ceil(RUNOUT_M / cell);
@@ -148,6 +177,7 @@
     for (let i = 0; i < nF; i++) {
       cars.push({
         x: -(i + 1) * lenCells, v: 0, gone: false,
+        factor: factors[i], model: App.vehicle.makeAccelModel(params, vTargetMax, factors[i]),
         committed: new Array(N).fill(false),
         crossT: new Array(N).fill(null), stops: 0, trace: [], hardBrakes: 0, maxDecel: 0
       });
@@ -192,7 +222,7 @@
         }
 
         const vMax = vMaxAt(x);
-        let w = Math.min(v + aCells, vMax);
+        let w = Math.min(v + accelIncrement(c.model, v, cell, dtS, rand), vMax);
         w = Math.min(w, gapLead, gapSig);
         if (gapLead !== Infinity) w = Math.min(w, safeSpeed(gapLead + tail(leaderV, bCells), bCells, w));
         if (gapSig !== Infinity) w = Math.min(w, safeSpeed(gapSig, bCells, w));
@@ -259,7 +289,12 @@
       meanHeadwayS: headways.length ? headways.reduce((a, b) => a + b, 0) / headways.length : null,
       meanTravelS: travel.length ? travel.reduce((a, b) => a + b, 0) / travel.length : null,
       hardBrakeCount: list.reduce((s, c) => s + c.hardBrakes, 0),
-      cellM: cell, aCells, bCells, lenCells,
+      cellM: cell, bCells, lenCells,
+      accel: {
+        kind: nominal.kind, a0: App.vehicle.accelAt(nominal, 0), aAtTarget: App.vehicle.accelAt(nominal, vTargetMax),
+        sigma, factorMin: factors.length ? Math.min(...factors) : 1, factorMax: factors.length ? Math.max(...factors) : 1,
+        factorMean: factors.length ? factors.reduce((a, b) => a + b, 0) / factors.length : 1
+      },
       vMaxKmh: vMaxCells.filter(v => v != null).map(v => v * cell / dtS * 3.6),
       queueLengthM: nF * lenCells * cell,
       steps
@@ -291,5 +326,5 @@
     };
   }
 
-  App.platoon = { simulate, runBatch, tail, safeSpeed, mulberry32, DEFAULTS };
+  App.platoon = { simulate, runBatch, tail, safeSpeed, accelIncrement, mulberry32, DEFAULTS };
 })(window.App = window.App || {});

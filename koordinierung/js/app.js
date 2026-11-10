@@ -102,6 +102,9 @@
     anaDecel: document.getElementById('anaDecel'),
     anaLost: document.getElementById('anaLost'),
     anaYellow: document.getElementById('anaYellow'),
+    anaProfile: document.getElementById('anaProfile'),
+    anaSigma: document.getElementById('anaSigma'),
+    accelInfo: document.getElementById('accelInfo'),
     anaPlatoon: document.getElementById('anaPlatoon'),
     platoonParams: document.getElementById('platoonParams'),
     anaPN: document.getElementById('anaPN'),
@@ -914,6 +917,7 @@
     return {
       accel: num(els.anaAccel, 1.5), decel: num(els.anaDecel, 1.5),
       lostTimeS: num(els.anaLost, 2), yellowTolS: num(els.anaYellow, 0),
+      profile: els.anaProfile.value === 'constant' ? 'constant' : 'linear',
       target: els.anaTarget.value.trim() === '' ? null : Number(els.anaTarget.value)
     };
   }
@@ -931,6 +935,7 @@
     const num = (el, def) => (el.value.trim() === '' || !Number.isFinite(Number(el.value)) ? def : Number(el.value));
     return {
       nCars: Math.round(num(els.anaPN, D.nCars)), p: num(els.anaP, D.p), p0: num(els.anaP0, D.p0),
+      sigma: Math.max(0, num(els.anaSigma, D.sigma * 100)) / 100,
       seed: Math.max(0, Math.round(num(els.anaSeed, D.seed)))
     };
   }
@@ -957,7 +962,7 @@
     try {
       const sim = App.vehicle.simulate({
         nodes, startIdx, tGreenStart,
-        params: { accel: p.accel, decel: p.decel, lostTimeS: p.lostTimeS, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray }
+        params: { accel: p.accel, accelProfile: p.profile, decel: p.decel, lostTimeS: p.lostTimeS, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray }
       });
       analysisSim = { sim, points: App.vehicle.samplePoints(sim, 0.5), tag: analysisSel.tag };
       if (els.anaPlatoon.checked) {
@@ -966,7 +971,7 @@
         const pp = platoonParams();
         const input = {
           nodes, startIdx, tGreenStart, lead: sim,
-          params: { accel: p.accel, decel: p.decel, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray, ...pp }
+          params: { accel: p.accel, accelProfile: p.profile, decel: p.decel, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray, ...pp }
         };
         try {
           analysisPlatoon = { res: App.platoon.simulate(input), batch: App.platoon.runBatch(input, 40), startIdx, sign: sim.sign };
@@ -995,6 +1000,12 @@
 
   function renderAnalysisPanel() {
     const has = analysisSim != null;
+    // Show the acceleration that the model really uses.
+    const ac = has ? analysisSim.sim.accel : null;
+    els.accelInfo.textContent = !ac ? ''
+      : (ac.kind === 'linear'
+        ? `Beschleunigung linear fallend: ${ac.a0Now.toFixed(2)} m/s² beim Anfahren → ${ac.aAtTarget.toFixed(2)} m/s² bei ${ac.vTargetMaxKmh.toFixed(0)} km/h (Ø ${ac.mean.toFixed(2)} m/s²)`
+        : `Beschleunigung konstant ${ac.a.toFixed(2)} m/s²`);
     els.analysisClear.style.display = analysisSel ? '' : 'none';
     els.analysisError.style.display = analysisErr ? 'block' : 'none';
     els.analysisError.textContent = analysisErr;
@@ -1014,7 +1025,7 @@
       els.platoonKpis.innerHTML = App.analysis.platoonKpiHtml(analysisPlatoon);
       els.platoonCars.innerHTML = App.analysis.platoonCarsHtml(analysisPlatoon, sim.tOrigin);
       const s = analysisPlatoon.res.summary;
-      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m (so gewählt, dass eine Zelle je Sekunde² der eingestellten Beschleunigung entspricht), Fahrzeuglänge ${s.lenCells} Zellen, Zeitschritt 1 s, Seed ${els.anaSeed.value || 1}. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten validiert.`;
+      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m (so gewählt, dass eine Zelle je Sekunde² der mittleren Beschleunigung entspricht; die Beschleunigung selbst folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor), Fahrzeuglänge ${s.lenCells} Zellen, Zeitschritt 1 s, Seed ${els.anaSeed.value || 1}. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten validiert.`;
     }
   }
 
@@ -1033,7 +1044,7 @@
   }
 
   els.analysisClear.addEventListener('click', () => { analysisSel = null; refreshAnalysis(); });
-  [els.anaTarget, els.anaAccel, els.anaDecel, els.anaLost, els.anaYellow, els.anaPN, els.anaP, els.anaP0, els.anaSeed]
+  [els.anaTarget, els.anaAccel, els.anaProfile, els.anaDecel, els.anaLost, els.anaYellow, els.anaPN, els.anaP, els.anaP0, els.anaSigma, els.anaSeed]
     .forEach(el => el.addEventListener('change', refreshAnalysis));
   els.anaPlatoon.addEventListener('change', () => {
     els.platoonParams.style.display = els.anaPlatoon.checked ? '' : 'none';

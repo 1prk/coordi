@@ -89,6 +89,10 @@
         sub: 'ab erster Haltlinie, nur angekommene Fahrzeuge'
       },
       {
+        label: 'Beschleunigung', value: s.accel.kind === 'linear' ? `${f1(s.accel.a0)} → ${f1(s.accel.aAtTarget)} m/s²` : `${f1(s.accel.a0)} m/s²`,
+        sub: `${s.accel.kind === 'linear' ? 'linear fallend' : 'konstant'} · Fahrer ${f0(s.accel.factorMin * 100)}–${f0(s.accel.factorMax * 100)} % (σ ${f0(s.accel.sigma * 100)} %)`
+      },
+      {
         label: 'Modellraster', value: `${f1(s.cellM)} m`,
         sub: `v_max ${s.vMaxKmh.map(v => f1(v)).join(' / ')} km/h (auf das Raster gerundet)`
       }

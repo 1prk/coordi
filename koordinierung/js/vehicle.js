@@ -8,28 +8,88 @@
    Vehicle model:
    1. The vehicle stands at the stop line of the start node.
    2. It waits for the start-up lost time after the green start.
-   3. It accelerates with a constant acceleration to the target speed.
+   3. It accelerates to the target speed (see "Acceleration models").
    4. It keeps the target speed until the next stop line.
    5. At each next node it checks the real green windows of that node.
       - Arrival in green: the vehicle drives through without a stop.
       - Arrival in red: the vehicle brakes with a constant deceleration,
         stops at the stop line, waits for the next real green, and starts
         again (step 2).
-   The vehicle is alone on the road. There is no queue and no other vehicle. */
+   The vehicle is alone on the road. There is no queue and no other vehicle.
+
+   Acceleration models (params.accelProfile):
+   - 'constant': a(v) = a. The old model. Speed changes abruptly at the end.
+   - 'linear': a(v) = a0 * (1 - v / vl). The acceleration is highest at
+     standstill and falls linearly with the speed. vl is the speed at which
+     the acceleration would be zero. This is the "linearly decreasing"
+     model (Drew 1968; Long 2000, Transportation Research Record 1737, who
+     found it fits vehicle capability and driver behavior better than a
+     constant rate).
+   The user gives the MEAN acceleration "a" from standstill to the highest
+   target speed. The module computes a0 and vl from it. The ratio
+   a(target) / a0 is ACCEL_RATIO_AT_TARGET. This ratio is an assumption: the
+   literature search found no verified value for passenger cars. */
 (function (App) {
   'use strict';
 
   const EPS = 1e-9;
   const KMH_TO_MS = 1 / 3.6;
+  const ACCEL_RATIO_AT_TARGET = 0.5;
 
-  // A phase with a constant acceleration from speed v0 to speed v1.
-  function ramp(v0, v1, acc) {
-    return {
-      kind: acc >= 0 ? 'accel' : 'brake',
-      dt: (v1 - v0) / acc,
-      ds: (v1 * v1 - v0 * v0) / (2 * acc),
-      v0, v1, a: acc
-    };
+  /* ---------------- Acceleration models ---------------- */
+
+  // Model object. kind 'const': { kind, a }. kind 'linear': { kind, a0, vl }.
+  // factor scales the acceleration (driver factor, 1 = nominal driver).
+  function makeAccelModel(params, vTargetMax, factor) {
+    const f = factor > 0 ? factor : 1;
+    const mean = params.accel;
+    if (params.accelProfile !== 'linear') return { kind: 'const', a: mean * f, mean };
+    const r = ACCEL_RATIO_AT_TARGET;
+    // Mean acceleration from 0 to the target: a0 * (1 - r) / ln(1 / r).
+    const a0 = mean * Math.log(1 / r) / (1 - r) * f;
+    return { kind: 'linear', a0, vl: vTargetMax / (1 - r), mean, r };
+  }
+
+  function accelAt(m, v) {
+    return m.kind === 'const' ? m.a : Math.max(0, m.a0 * (1 - v / m.vl));
+  }
+
+  // Distance needed to accelerate from v0 to v1 (v1 >= v0).
+  function accelDist(m, v0, v1) {
+    if (m.kind === 'const') return (v1 * v1 - v0 * v0) / (2 * m.a);
+    return (m.vl / m.a0) * ((v0 - v1) + m.vl * Math.log((m.vl - v0) / (m.vl - v1)));
+  }
+
+  // Time needed to accelerate from v0 to v1 (v1 >= v0).
+  function accelTime(m, v0, v1) {
+    if (m.kind === 'const') return (v1 - v0) / m.a;
+    return (m.vl / m.a0) * Math.log((m.vl - v0) / (m.vl - v1));
+  }
+
+  // Speed after the distance L, if the vehicle accelerates from v0 (not more
+  // than vCap). The distance grows with the speed, so bisection works.
+  function accelSpeedAtDist(m, v0, L, vCap) {
+    if (m.kind === 'const') return Math.min(vCap, Math.sqrt(v0 * v0 + 2 * m.a * L));
+    let lo = v0, hi = vCap;
+    for (let i = 0; i < 100; i++) {
+      const mid = (lo + hi) / 2;
+      if (accelDist(m, v0, mid) < L) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
+  /* ---------------- Motion phases ---------------- */
+
+  // A phase of acceleration from v0 to v1 with the model m.
+  function accelPhase(m, v0, v1) {
+    const ph = { kind: 'accel', dt: accelTime(m, v0, v1), ds: accelDist(m, v0, v1), v0, v1, a: accelAt(m, v0) };
+    if (m.kind === 'linear') ph.lin = { a0: m.a0, vl: m.vl };
+    return ph;
+  }
+
+  // A phase of braking with the constant deceleration b (positive number).
+  function brakePhase(v0, v1, b) {
+    return { kind: 'brake', dt: (v0 - v1) / b, ds: (v0 * v0 - v1 * v1) / (2 * b), v0, v1, a: -b };
   }
 
   // A phase with a constant speed over the distance ds.
@@ -37,29 +97,46 @@
     return { kind: 'cruise', dt: ds / v, ds, v0: v, v1: v, a: 0 };
   }
 
+  // State inside a phase, tr seconds after the start of the phase.
+  // Returns { v, s (meters since the start of the phase), a }.
+  function evalPhase(ph, tr) {
+    if (ph.lin) {
+      const lam = ph.lin.a0 / ph.lin.vl;
+      const e = Math.exp(-lam * tr);
+      const v = ph.lin.vl - (ph.lin.vl - ph.v0) * e;
+      return { v, s: ph.lin.vl * tr - (ph.lin.vl - ph.v0) * (1 - e) / lam, a: ph.lin.a0 * (1 - v / ph.lin.vl) };
+    }
+    return { v: ph.v0 + ph.a * tr, s: ph.v0 * tr + 0.5 * ph.a * tr * tr, a: ph.a };
+  }
+
   // Motion phases for one section.
   // v0: speed at the start of the section. L: section length.
-  // vt: target speed. a: acceleration. b: deceleration (positive number).
+  // vt: target speed. accel: acceleration model (or a number = constant
+  // acceleration). b: deceleration (positive number).
   // stopAtEnd: true = the vehicle must stand still at the end of the section.
   // Returns { phases, vEnd, dt }. Returns null if the vehicle cannot stop
   // within the length L.
-  function sectionProfile(v0, L, vt, a, b, stopAtEnd) {
+  function sectionProfile(v0, L, vt, accel, b, stopAtEnd) {
+    const m = typeof accel === 'number' ? { kind: 'const', a: accel } : accel;
     const phases = [];
     if (!stopAtEnd) {
       if (v0 <= vt) {
-        const dAcc = (vt * vt - v0 * v0) / (2 * a);
+        const dAcc = accelDist(m, v0, vt);
         if (dAcc >= L) {
-          phases.push(ramp(v0, Math.sqrt(v0 * v0 + 2 * a * L), a));
+          const v1 = accelSpeedAtDist(m, v0, L, vt);
+          const ph = accelPhase(m, v0, v1);
+          ph.ds = L;
+          phases.push(ph);
         } else {
-          if (dAcc > EPS) phases.push(ramp(v0, vt, a));
+          if (dAcc > EPS) phases.push(accelPhase(m, v0, vt));
           phases.push(cruise(vt, L - dAcc));
         }
       } else {
         const dDec = (v0 * v0 - vt * vt) / (2 * b);
         if (dDec >= L) {
-          phases.push(ramp(v0, Math.sqrt(Math.max(0, v0 * v0 - 2 * b * L)), -b));
+          phases.push(brakePhase(v0, Math.sqrt(Math.max(0, v0 * v0 - 2 * b * L)), b));
         } else {
-          phases.push(ramp(v0, vt, -b));
+          phases.push(brakePhase(v0, vt, b));
           phases.push(cruise(vt, L - dDec));
         }
       }
@@ -67,21 +144,26 @@
       if (v0 * v0 / (2 * b) > L + 1e-6) return null;
       if (v0 >= vt) {
         let used = 0;
-        if (v0 > vt + EPS) { phases.push(ramp(v0, vt, -b)); used = (v0 * v0 - vt * vt) / (2 * b); }
+        if (v0 > vt + EPS) { phases.push(brakePhase(v0, vt, b)); used = (v0 * v0 - vt * vt) / (2 * b); }
         const rest = L - used - vt * vt / (2 * b);
         if (rest > EPS) phases.push(cruise(vt, rest));
-        phases.push(ramp(vt, 0, -b));
+        phases.push(brakePhase(vt, 0, b));
+      } else if (accelDist(m, v0, vt) + vt * vt / (2 * b) <= L) {
+        phases.push(accelPhase(m, v0, vt));
+        const rest = L - accelDist(m, v0, vt) - vt * vt / (2 * b);
+        if (rest > EPS) phases.push(cruise(vt, rest));
+        phases.push(brakePhase(vt, 0, b));
       } else {
-        const vPeak = Math.sqrt((2 * a * b * L + b * v0 * v0) / (a + b));
-        if (vPeak >= vt) {
-          phases.push(ramp(v0, vt, a));
-          const rest = L - (vt * vt - v0 * v0) / (2 * a) - vt * vt / (2 * b);
-          if (rest > EPS) phases.push(cruise(vt, rest));
-          phases.push(ramp(vt, 0, -b));
-        } else {
-          if (vPeak - v0 > EPS) phases.push(ramp(v0, vPeak, a));
-          phases.push(ramp(vPeak, 0, -b));
+        // The target speed is not reached: accelerate to a peak speed, then brake.
+        // The total distance grows with the peak speed, so bisection works.
+        let lo = v0, hi = vt;
+        for (let i = 0; i < 100; i++) {
+          const mid = (lo + hi) / 2;
+          if (accelDist(m, v0, mid) + mid * mid / (2 * b) < L) lo = mid; else hi = mid;
         }
+        const vPeak = (lo + hi) / 2;
+        if (vPeak - v0 > EPS) phases.push(accelPhase(m, v0, vPeak));
+        phases.push(brakePhase(vPeak, 0, b));
       }
     }
     const last = phases[phases.length - 1];
@@ -114,7 +196,9 @@
   //          greenSegs: real green windows [{ start, end }] in ms.
   //   startIdx: index of the start node (the vehicle starts at its stop line).
   //   tGreenStart: start (ms) of the green window in which the vehicle starts.
-  //   params: { accel, decel, lostTimeS, yellowTolS, targetKmh }
+  //   params: { accel (mean acceleration), accelProfile ('linear' | 'constant',
+  //             default 'constant'), accelFactor (default 1), decel,
+  //             lostTimeS, yellowTolS, targetKmh }
   //           targetKmh: one number, or one number per section
   //           (section j = node j to node j+1).
   //   freeFlow: true = ignore all signals (used for the reference time).
@@ -124,7 +208,7 @@
     checkParams(params);
     const N = nodes.length;
     if (!(startIdx >= 0 && startIdx < N - 1)) throw new Error('Der Startknoten braucht mindestens einen Folgeknoten.');
-    const a = params.accel, b = params.decel;
+    const b = params.decel;
     const lostS = Math.max(0, Number(params.lostTimeS) || 0);
     const tolMs = Math.max(0, Number(params.yellowTolS) || 0) * 1000;
     const target = (j) => {
@@ -133,6 +217,9 @@
       if (!(v > 0)) throw new Error(`Wunschgeschwindigkeit fehlt oder ist 0 (Abschnitt ${j + 1}).`);
       return v;
     };
+    let vTargetMax = 0;
+    for (let j = startIdx; j < N - 1; j++) vTargetMax = Math.max(vTargetMax, target(j));
+    const model = makeAccelModel(params, vTargetMax, params.accelFactor);
     const greens = nodes.map(n => (n.greenSegs || []).slice().sort((x, y) => x.start - y.start));
     const tOrigin = tGreenStart;
     const sign = nodes[startIdx + 1].station >= nodes[startIdx].station ? 1 : -1;
@@ -165,7 +252,7 @@
         continue;
       }
       const vt = target(j);
-      const free = sectionProfile(v, L, vt, a, b, false);
+      const free = sectionProfile(v, L, vt, model, b, false);
       const tArrS = tS + free.dt;
       const tArrMs = tOrigin + tArrS * 1000;
       const win = freeFlow ? null : greenAt(greens[j + 1], tArrMs, tolMs);
@@ -181,7 +268,7 @@
         continue;
       }
 
-      const stop = sectionProfile(v, L, vt, a, b, true);
+      const stop = sectionProfile(v, L, vt, model, b, true);
       if (!stop) {
         warnings.push(`${next.name}: Das Fahrzeug kann bei Rot nicht mehr anhalten (zu kurzer Abschnitt) und fährt durch.`);
         free.phases.forEach(p => addPhase(p));
@@ -209,7 +296,9 @@
     const travelS = tS - tDepartS;
     const result = {
       startIdx, sign, station0, tOrigin, phases, events, warnings, ended, reachedEnd,
-      nodes: nodes.map(n => ({ name: n.name, station: n.station }))
+      nodes: nodes.map(n => ({ name: n.name, station: n.station })),
+      // Acceleration model of this run, for the display and for the platoon.
+      accel: { ...model, a0Now: accelAt(model, 0), aAtTarget: accelAt(model, vTargetMax), vTargetMaxKmh: vTargetMax * 3.6 }
     };
     result.summary = {
       tStart: tOrigin, tDepart: tOrigin + tDepartS * 1000, tEnd: tOrigin + tS * 1000,
@@ -231,22 +320,22 @@
   // Samples of the trajectory for drawing and charts.
   // Each point: { tMs, s (meters since the start node), station, v (m/s), a (m/s2) }.
   // The points lie on the phase borders and every stepS seconds inside a phase.
-  // The acceleration is constant inside a phase, so each phase border has two
-  // points with the two accelerations (step shape).
+  // The acceleration is constant inside most phases, so each phase border has
+  // two points with the two accelerations (step shape).
   function samplePoints(result, stepS) {
     const step = stepS > 0 ? stepS : 0.5;
     const pts = [];
-    const mk = (ph, tRel, a) => {
-      const v = ph.v0 + ph.a * tRel;
-      const s = ph.s0 + ph.v0 * tRel + 0.5 * ph.a * tRel * tRel;
-      return { tMs: result.tOrigin + (ph.t0 + tRel) * 1000, s, station: result.station0 + result.sign * s, v, a };
+    const mk = (ph, tRel) => {
+      const e = evalPhase(ph, tRel);
+      const s = ph.s0 + e.s;
+      return { tMs: result.tOrigin + (ph.t0 + tRel) * 1000, s, station: result.station0 + result.sign * s, v: e.v, a: e.a };
     };
     result.phases.forEach(ph => {
-      pts.push(mk(ph, 0, ph.a));
+      pts.push(mk(ph, 0));
       if (ph.kind === 'accel' || ph.kind === 'brake') {
-        for (let t = step; t < ph.dt - 1e-9; t += step) pts.push(mk(ph, t, ph.a));
+        for (let t = step; t < ph.dt - 1e-9; t += step) pts.push(mk(ph, t));
       }
-      pts.push(mk(ph, ph.dt, ph.a));
+      pts.push(mk(ph, ph.dt));
     });
     return pts;
   }
@@ -262,8 +351,8 @@
     if (t >= last.t1) return { s: last.s1, v: last.v1 };
     for (const q of ph) {
       if (t < q.t1) {
-        const tr = t - q.t0;
-        return { s: q.s0 + q.v0 * tr + 0.5 * q.a * tr * tr, v: q.v0 + q.a * tr };
+        const e = evalPhase(q, t - q.t0);
+        return { s: q.s0 + e.s, v: e.v };
       }
     }
     return { s: last.s1, v: last.v1 };
@@ -277,7 +366,15 @@
       const ds = s - q.s0;
       if (ds <= 0) return result.tOrigin + q.t0 * 1000;
       let tr;
-      if (Math.abs(q.a) < 1e-12) tr = q.v0 > 0 ? ds / q.v0 : null;
+      if (q.lin) {
+        // The distance grows with the time, so bisection works.
+        let lo = 0, hi = q.dt;
+        for (let i = 0; i < 100; i++) {
+          const mid = (lo + hi) / 2;
+          if (evalPhase(q, mid).s < ds) lo = mid; else hi = mid;
+        }
+        tr = (lo + hi) / 2;
+      } else if (Math.abs(q.a) < 1e-12) tr = q.v0 > 0 ? ds / q.v0 : null;
       else tr = (-q.v0 + Math.sqrt(Math.max(0, q.v0 * q.v0 + 2 * q.a * ds))) / q.a;
       if (tr == null) continue;
       return result.tOrigin + (q.t0 + tr) * 1000;
@@ -285,5 +382,8 @@
     return null;
   }
 
-  App.vehicle = { simulate, samplePoints, sectionProfile, greenAt, nextGreen, stateAt, timeAtDistance };
+  App.vehicle = {
+    simulate, samplePoints, sectionProfile, greenAt, nextGreen, stateAt, timeAtDistance,
+    makeAccelModel, accelAt, accelDist, accelTime, evalPhase, ACCEL_RATIO_AT_TARGET
+  };
 })(window.App = window.App || {});

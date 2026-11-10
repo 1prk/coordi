@@ -233,3 +233,5 @@ footer {
 .seed-row .input { min-width: 0; }
 .platoon-title { margin: var(--space-4) 0 var(--space-2); font-size: 14px; }
 .platoon-note { font-size: 12px; color: var(--text-muted); padding-top: var(--space-2); }
+
+.analysis-accel-info { font-family: var(--mono); font-size: 11px; color: var(--text-muted); padding: var(--space-2) var(--space-4) 0; min-height: 18px; }

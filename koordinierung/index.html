@@ -156,8 +156,15 @@
             <input class="input" type="number" min="1" max="130" step="1" id="anaTarget" placeholder="V_p je Abschnitt" title="Leer = die V_p (Vorschlag) des jeweiligen Abschnitts">
           </div>
           <div class="field">
-            <label>Beschleunigung [m/s²]</label>
-            <input class="input" type="number" min="0.1" max="6" step="0.1" id="anaAccel" value="1.5">
+            <label>Beschleunigung Ø [m/s²]</label>
+            <input class="input" type="number" min="0.1" max="6" step="0.1" id="anaAccel" value="1.5" title="Mittlere Beschleunigung vom Stand bis zur höchsten Wunschgeschwindigkeit">
+          </div>
+          <div class="field">
+            <label>Beschleunigungsprofil</label>
+            <select class="input" id="anaProfile" title="Linear fallend: am stärksten beim Anfahren, nimmt mit der Geschwindigkeit linear ab (Drew 1968; Long 2000). Konstant: immer derselbe Wert.">
+              <option value="linear" selected>linear fallend (mit v)</option>
+              <option value="constant">konstant</option>
+            </select>
           </div>
           <div class="field">
             <label>Verzögerung [m/s²]</label>
@@ -172,6 +179,7 @@
             <input class="input" type="number" min="0" max="6" step="0.5" id="anaYellow" value="0" title="So lange nach Grünende darf das Fahrzeug noch durchfahren">
           </div>
         </div>
+        <div class="analysis-accel-info" id="accelInfo"></div>
         <div class="analysis-platoon">
           <label class="radio settings-check" title="Hinter dem Führungsfahrzeug steht ein Pulk und fährt mit dem Grün ab (Nagel-Schreckenberg-Modell)">
             <input type="checkbox" id="anaPlatoon">
@@ -191,6 +199,10 @@
             <div class="field">
               <label>Anfahrverzögerung p₀</label>
               <input class="input" type="number" min="0" max="1" step="0.01" id="anaP0" value="0.2" title="Wahrscheinlichkeit, mit der ein stehendes Fahrzeug je Sekunde noch nicht anfährt (Slow-to-start)">
+            </div>
+            <div class="field">
+              <label>Streuung der Fahrer σ [%]</label>
+              <input class="input" type="number" min="0" max="40" step="1" id="anaSigma" value="13" title="Jeder Fahrer im Pulk beschleunigt mit einem eigenen Faktor (Normalverteilung, auf ±2σ begrenzt). 13 % entspricht dem Fahrerfaktor 0,60 ± 0,08 im Fahrdynamikmodell der Virginia Tech. Das Führungsfahrzeug bleibt nominal.">
             </div>
             <div class="field">
               <label>Zufallszahl (Seed)</label>
@@ -223,7 +235,7 @@
             </table>
           </div>
         </div>
-        <div class="panel-note">Ein einzelnes Fahrzeug steht an der Haltlinie des ersten Knotens, fährt nach der Anfahrverlustzeit mit konstanter Beschleunigung an und hält die Wunschgeschwindigkeit. An jedem Folgeknoten wird die reale Freigabe geprüft: bei Grün fährt es durch, bei Rot bremst es mit der eingestellten Verzögerung bis zur Haltlinie, wartet auf das nächste reale Grün und fährt wieder an. Es gibt keinen Rückstau und keine anderen Fahrzeuge (außer im optionalen, experimentellen Pulk). Beim Querschnitts-Band startet das Fahrzeug am abfahrenden Knoten dieses Abschnitts.</div>
+        <div class="panel-note">Ein einzelnes Fahrzeug steht an der Haltlinie des ersten Knotens, fährt nach der Anfahrverlustzeit an und hält die Wunschgeschwindigkeit. Die Beschleunigung fällt im Standardprofil linear mit der Geschwindigkeit (am stärksten beim Anfahren); der eingestellte Wert ist der Mittelwert vom Stand bis zur höchsten Wunschgeschwindigkeit. Das Verhältnis der Beschleunigung bei Wunschgeschwindigkeit zur Anfangsbeschleunigung ist mit 0,5 angenommen. An jedem Folgeknoten wird die reale Freigabe geprüft: bei Grün fährt es durch, bei Rot bremst es mit der eingestellten Verzögerung bis zur Haltlinie, wartet auf das nächste reale Grün und fährt wieder an. Es gibt keinen Rückstau und keine anderen Fahrzeuge (außer im optionalen, experimentellen Pulk). Beim Querschnitts-Band startet das Fahrzeug am abfahrenden Knoten dieses Abschnitts.</div>
       </div>
     </div>
 
