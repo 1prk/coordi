@@ -35,6 +35,9 @@
   const EPS = 1e-9;
   const KMH_TO_MS = 1 / 3.6;
   const ACCEL_RATIO_AT_TARGET = 0.5;
+  // Firm braking for a stop at a signal (ITE, NCHRP 731: 10 ft/s2). The lead
+  // uses it, if the comfort deceleration cannot stop it in the section.
+  const MAX_DECEL_MS2 = 3.05;
 
   /* ---------------- Acceleration models ---------------- */
 
@@ -268,7 +271,9 @@
         continue;
       }
 
-      const stop = sectionProfile(v, L, vt, model, b, true);
+      let stop = sectionProfile(v, L, vt, model, b, true);
+      let firm = false;
+      if (!stop) { stop = sectionProfile(v, L, vt, model, Math.max(b, MAX_DECEL_MS2), true); firm = !!stop; }
       if (!stop) {
         warnings.push(`${next.name}: Das Fahrzeug kann bei Rot nicht mehr anhalten (zu kurzer Abschnitt) und fährt durch.`);
         free.phases.forEach(p => addPhase(p));
@@ -279,7 +284,7 @@
       stop.phases.forEach(p => addPhase(p));
       v = 0;
       const tStopMs = tOrigin + tS * 1000;
-      const ev = { idx: j + 1, name: next.name, station: next.station, tArrive: tStopMs, vArrive: 0, passed: false, stopped: true, greenMarginS: null, sinceGreenS: null };
+      const ev = { idx: j + 1, name: next.name, station: next.station, tArrive: tStopMs, vArrive: 0, passed: false, stopped: true, firm, greenMarginS: null, sinceGreenS: null };
       events.push(ev);
       // The simulation ends when the vehicle reaches the last stop line.
       if (isLast) { ev.endsHere = true; break; }

@@ -78,7 +78,7 @@
       },
       {
         label: 'Start verpasst', value: `${s.missedFirstGreenCount}`, cls: s.missedFirstGreenCount ? 'warn' : '',
-        sub: 'kamen im ersten Grün nicht über die erste Haltlinie'
+        sub: 'kamen im ersten Grün (mit Gelb) nicht über die erste Haltlinie'
       },
       {
         label: 'Abfluss-Zeitabstand', value: s.meanHeadwayS != null ? `${f1(s.meanHeadwayS)} s` : '–',
@@ -105,15 +105,35 @@
       </div>`).join('');
   }
 
+  // One muted line about red-light violations of the platoon. pl = { res, batch, marks }.
+  function redRunText(pl) {
+    const b = pl.batch, n = pl.marks.length;
+    const stat = b.meanRedRuns > 0
+      ? `Ø ${b.meanRedRuns.toFixed(2)} je Lauf, in ${f0(b.redRunShare * 100)} % der ${b.runs} Läufe mindestens eines`
+      : `keine in ${b.runs} Läufen`;
+    const here = n === 0 ? 'in diesem Lauf keines'
+      : `in diesem Lauf ${n}: ` + pl.marks.map(m => `Fz ${m.car} an ${m.node}${m.afterS != null ? ', ' + f1(m.afterS) + ' s nach Ende von Grün/Gelb' : ''}`).join('; ');
+    return `Rotlichtverstöße (Überfahrt nach Grün und Gelb; Gelb aus den Daten, sonst 3 s angenommen): ${here} · ${stat}.`;
+  }
+
   // One row for each car of the platoon.
   function platoonCarsHtml(pl, tOrigin) {
     const at = (t) => (t == null ? '–' : `${fmtTimeShort(t)} (+${f1((t - tOrigin) / 1000)} s)`);
     return pl.res.cars.map(c => {
       let result;
       if (c.through) result = '<span class="stat-ok">ohne Halt durch</span>';
-      else if (c.missedFirstGreen) result = '<span class="stat-bad">Start verpasst</span> (hält am ersten Knoten erneut)';
+      else if (c.missedFirstGreen) {
+        // A car that ran the red at the first line did not stop there.
+        const ranRed = (c.redRuns || []).some(r => r.idx === pl.startIdx);
+        result = '<span class="stat-bad">Start verpasst</span>' + (ranRed ? '' : ' (hält am ersten Knoten erneut)');
+      }
       else if (!c.finished) result = '<span class="stat-bad">nicht angekommen</span>';
       else result = `<span class="stat-warn">${c.stops} Halt${c.stops > 1 ? 'e' : ''}</span>`;
+      // Discreet note for a red-light violation (seconds after the legal time ended).
+      if (c.redRuns && c.redRuns.length) {
+        const r = c.redRuns[0];
+        result += ` <span class="redrun-note" title="Das Fahrzeug überquert die Haltlinie, nachdem Grün und Gelb zu Ende sind">· Rotlicht${r.afterS != null ? ' (' + f1(r.afterS) + ' s)' : ''}</span>`;
+      }
       return `<tr>
         <td>${c.isLead ? '1 (Führung)' : c.index + 1}</td>
         <td>${at(c.cross0)}</td>
@@ -123,100 +143,6 @@
         <td>${result}</td>
       </tr>`;
     }).join('');
-  }
-
-  // EXPERIMENTAL fundamental diagram check (see fundamental.js): table of the
-  // comparison with the reference values.
-  function fdChecksHtml(ev) {
-    return ev.checks.map(c => {
-      const dec = (c.unit === 'Fz/h' || c.unit === 'Fz/km') ? 0 : 1;
-      const status = c.ok === true ? '<span class="stat-ok">✓ im Bereich</span>'
-        : (c.ok === false ? '<span class="stat-bad">✗ außerhalb</span>' : '–');
-      return `<tr>
-        <td>${esc(c.label)}${c.note ? `<div class="fd-note">${esc(c.note)}</div>` : ''}</td>
-        <td>${c.value == null ? '–' : c.value.toFixed(dec) + ' ' + esc(c.unit)}</td>
-        <td>${c.lo}–${c.hi} ${esc(c.unit)}</td>
-        <td>${status}</td>
-        <td><span class="tag tag-neutral">${esc(c.certainty)}</span> <span class="fd-note">${esc(c.basis)}</span></td>
-      </tr>`;
-    }).join('');
-  }
-
-  // Table of the sensitivity to the standstill gap. currentGapM marks the row
-  // that matches the current setting.
-  function fdSensHtml(rows, currentGapM) {
-    return rows.map(r => `<tr${Math.abs(r.standGapM - currentGapM) < 0.01 ? ' class="fd-current"' : ''}>
-      <td>${f1(r.standGapM)} m${Math.abs(r.standGapM - currentGapM) < 0.01 ? ' (aktuell)' : ''}</td>
-      <td>${f1(r.spacingM)} m</td>
-      <td>${f0(r.kJ)} Fz/km</td>
-      <td>${f0(r.qMax)} Fz/h</td>
-      <td>${r.w == null ? '–' : f1(r.w) + ' km/h'}</td>
-      <td>${r.failed === 0 ? '<span class="stat-ok">' : '<span class="stat-bad">'}${r.passed} ✓ / ${r.failed} ✗</span></td>
-    </tr>`).join('');
-  }
-
-  // Flow-density and speed-density diagram of the model. The shaded bands are
-  // reference ranges (capacity and jam density). The dashed line is the
-  // triangular diagram that follows from the measured free-flow speed, wave
-  // speed and jam density.
-  function renderFundamental(el, fd, ev) {
-    const d3 = window.d3;
-    el.innerHTML = '';
-    if (!d3) { el.textContent = 'D3.js konnte nicht geladen werden.'; return; }
-    const R = App.fundamental.REFERENCES;
-    const W = Math.max(420, el.clientWidth || 800);
-    const m = { l: 56, r: 14, t: 10, b: 36 };
-    const innerW = W - m.l - m.r;
-    const kMax = Math.max(fd.jamDensityPerKm, R.jam.hi * 0.98, ...fd.points.map(p => p.k)) * 1.04;
-    const x = d3.scaleLinear().domain([0, kMax]).range([m.l, m.l + innerW]);
-    const charts = [
-      { h: 230, title: 'Fluss q [Fz/h]', yMax: Math.max(R.capacity.hi, ev.qMax) * 1.1, val: p => p.q, kind: 'q' },
-      { h: 170, title: 'Geschwindigkeit v [km/h]', yMax: fd.vMaxKmh * 1.1, val: p => p.v, kind: 'v' }
-    ];
-    charts.forEach((c, ci) => {
-      const H = c.h + m.t + m.b;
-      const y = d3.scaleLinear().domain([0, c.yMax]).range([m.t + c.h, m.t]);
-      const svg = d3.select(el).append('svg').attr('class', 'analysis-chart').attr('width', W).attr('height', H)
-        .attr('viewBox', `0 0 ${W} ${H}`).attr('font-family', 'Consolas, ui-monospace, monospace');
-      svg.append('rect').attr('x', m.l).attr('y', m.t).attr('width', innerW).attr('height', c.h).attr('fill', '#fff').attr('stroke', 'var(--border-strong)');
-      // Reference bands.
-      svg.append('rect').attr('x', x(R.jam.lo)).attr('y', m.t).attr('width', x(Math.min(kMax, R.jam.hi)) - x(R.jam.lo)).attr('height', c.h)
-        .attr('fill', '#2b6ca3').attr('opacity', 0.10).append('title').text(`Referenz Staudichte ${R.jam.lo}–${R.jam.hi} Fz/km`);
-      if (c.kind === 'q') {
-        svg.append('rect').attr('x', m.l).attr('y', y(R.capacity.hi)).attr('width', innerW).attr('height', y(R.capacity.lo) - y(R.capacity.hi))
-          .attr('fill', '#d3a125').attr('opacity', 0.16).append('title').text(`Referenz Kapazität ${R.capacity.lo}–${R.capacity.hi} Fz/h`);
-        svg.append('text').attr('x', m.l + 6).attr('y', y(R.capacity.hi) + 11).attr('font-size', 9).attr('fill', '#8a5a00').text(`Referenz Kapazität ${R.capacity.lo}–${R.capacity.hi} Fz/h`);
-        svg.append('text').attr('x', x(R.jam.lo) + 4).attr('y', m.t + c.h - 6).attr('font-size', 9).attr('fill', '#2b6ca3').text(`Referenz Staudichte ${R.jam.lo}–${R.jam.hi}`);
-        // Triangular diagram from the measured values.
-        if (ev.qTri != null && ev.w > 0) {
-          const kcTri = ev.w * ev.kJ / (ev.vF + ev.w);
-          svg.append('path').attr('d', `M${x(0)},${y(0)} L${x(kcTri)},${y(ev.qTri)} L${x(ev.kJ)},${y(0)}`)
-            .attr('fill', 'none').attr('stroke', '#5b6b8a').attr('stroke-width', 1.4).attr('stroke-dasharray', '5 3');
-        }
-      } else {
-        svg.append('line').attr('x1', m.l).attr('x2', m.l + innerW).attr('y1', y(fd.vMaxKmh)).attr('y2', y(fd.vMaxKmh))
-          .attr('stroke', 'var(--text-faint)').attr('stroke-dasharray', '3 3');
-        svg.append('text').attr('x', m.l + innerW - 4).attr('y', y(fd.vMaxKmh) - 3).attr('font-size', 9).attr('text-anchor', 'end').attr('fill', 'var(--text-muted)').text('Wunschgeschwindigkeit (Raster)');
-      }
-      svg.append('g').attr('transform', `translate(0,${m.t + c.h})`).call(d3.axisBottom(x).ticks(10).tickSizeOuter(0)).selectAll('text').attr('font-size', 9);
-      svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(6).tickSizeOuter(0)).selectAll('text').attr('font-size', 9);
-      svg.selectAll('.domain, .tick line').attr('stroke', 'var(--text-faint)');
-      svg.append('text').attr('x', 8).attr('y', m.t + c.h / 2).attr('font-size', 10).attr('fill', 'var(--text-muted)')
-        .attr('transform', `rotate(-90 8 ${m.t + c.h / 2})`).attr('text-anchor', 'middle').text(c.title);
-      if (ci === charts.length - 1) {
-        svg.append('text').attr('x', m.l + innerW / 2).attr('y', H - 2).attr('font-size', 10).attr('text-anchor', 'middle')
-          .attr('fill', 'var(--text-muted)').text('Dichte k [Fz/km]');
-      }
-      fd.points.forEach(p => {
-        svg.append('circle').attr('cx', x(p.k)).attr('cy', y(c.val(p))).attr('r', 3).attr('fill', '#14181f')
-          .append('title').text(`k ${f1(p.k)} Fz/km · v ${f1(p.v)} km/h · q ${f0(p.q)} Fz/h`);
-      });
-      if (c.kind === 'q') {
-        svg.append('circle').attr('cx', x(ev.kC)).attr('cy', y(ev.qMax)).attr('r', 6.5).attr('fill', 'none').attr('stroke', '#ff7a00').attr('stroke-width', 2);
-        svg.append('text').attr('x', x(ev.kC) + 10).attr('y', y(ev.qMax) - 6).attr('font-size', 10).attr('font-weight', 700).attr('fill', '#c25a00')
-          .text(`q_max ${f0(ev.qMax)} Fz/h bei ${f0(ev.kC)} Fz/km`);
-      }
-    });
   }
 
   // Draw the two charts into the element `el`.
@@ -333,5 +259,5 @@
     });
   }
 
-  App.analysis = { kpiHtml, eventsHtml, renderCharts, platoonKpiHtml, platoonCarsHtml, fdChecksHtml, fdSensHtml, renderFundamental };
+  App.analysis = { kpiHtml, eventsHtml, renderCharts, platoonKpiHtml, platoonCarsHtml, redRunText };
 })(window.App = window.App || {});

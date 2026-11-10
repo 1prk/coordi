@@ -20,10 +20,23 @@
       rule). This models the start-up delay of a queue.
    4. Movement: x = x + v.
 
-   Signals: a red stop line acts as a standing obstacle. A car that cannot
-   stop with the comfort deceleration when the signal is red drives through
-   (dilemma zone). A signal is green from the start of a real green window to
-   its end plus the yellow tolerance.
+   Signals: a signal is green from the start to the end of a real green
+   window. The legal time continues after the green: the real yellow phase
+   (if the node gives it) plus the yellow tolerance. When the signal is not
+   green, a car decides
+   as follows (the dilemma zone logic of the ITE yellow interval: reaction
+   time 1 s, deceleration 3.05 m/s2, NCHRP 731; field mean 3.07 m/s2):
+   1. If the car can reach the stop line within the remaining legal time (the
+      real yellow phase after the green, if the node gives it), it drives on.
+   2. Else it stops at the line. It brakes with the comfort deceleration, and
+      with up to the firm deceleration (MAX_DECEL_MS2) if it is late.
+   3. Only if it cannot stop even with the firm deceleration, it drives
+      through. This is a real red-light violation. It is rare in reality
+      (0.05 to 3.9 % of vehicles in the literature, 95 % in the first 1.5 s of
+      red) and it is marked in the result (redRuns).
+   The decision is made again in each step while the car has not crossed the
+   line and has not committed. A stopped car or a green signal clears the
+   commitment.
 
    Acceleration model (params.accelProfile, see vehicle.js): 'linear' =
    a(v) = a0 * (1 - v / vl), highest at standstill and falling with the
@@ -50,8 +63,17 @@
    - at speed the car keeps at least the distance it covers in one time step
      (hard rule v <= gap) plus the comfort braking distance (see rule 2).
    This model is experimental. Results are one random sample. Use runBatch for
-   statistics and the fundamental diagram (fundamental.js) for a plausibility
-   check of the model.
+   statistics.
+
+   Plausibility check done during development (not part of the app, the code
+   is in the git history, commit e82d1d0): a ring road with exactly these
+   speed rules gave the fundamental diagram of the model. With the default
+   values: capacity 1820 veh/h (time gap 1.98 s, the HCM saturation flow is
+   about 1800 veh/h), jam density 125 veh/km, free-flow speed equal to the
+   target speed, and a backward wave speed of 21 km/h (literature on
+   freeways: 15 +- 5 km/h). The wave speed is the spacing divided by 1.35 s,
+   so a smaller standstill gap gives a slower wave. The queue discharge
+   headway on an open road (2.0 s) agrees with the time gap at capacity.
 
    Sources of the method (checked by web search; the original papers could
    not be opened in the build environment, so the exact rule text comes from
@@ -73,6 +95,7 @@
   const STEP_MS = 1000;
   const CELL_M = 0.5;           // cell length
   const SLOWDOWN_MS = 1.5;      // speed lost in one random slowdown [m/s]
+  const MAX_DECEL_MS2 = 3.05;   // firm braking for a stop at a signal (ITE, NCHRP 731: 10 ft/s2)
   const MAX_STEPS = 1500;       // upper limit of the simulated time (seconds)
   const RUNOUT_M = 150;         // cars drive on this far behind the last node
 
@@ -93,6 +116,7 @@
     return {
       cell, dtS,
       bCells: Math.max(1, Math.round(params.decel * dtS * dtS / cell)),
+      bMaxCells: Math.max(1, Math.round(Math.max(params.decel, MAX_DECEL_MS2) * dtS * dtS / cell)),
       slowCells: Math.max(1, Math.round(SLOWDOWN_MS * dtS / cell)),
       lenCells, g0Cells,
       spacingM: (lenCells + g0Cells) * cell
@@ -149,9 +173,8 @@
     return w;
   }
 
-  // The speed update of ONE car for the next step (rules 1 to 3). Both the
-  // platoon simulation and the ring road of the fundamental diagram use this
-  // function, so the diagram checks exactly the rules of the platoon.
+  // The speed update of ONE car for the next step (rules 1 to 3). One shared
+  // function keeps the rules in one place.
   //   v: speed [cells/step]. vMax: speed limit of the section [cells/step].
   //   leaderGap: free cells to the leader after the standstill gap, or Infinity.
   //   leaderV: speed of the leader. gapSig: free cells to a red stop line, or Infinity.
@@ -159,12 +182,17 @@
   // than the comfort value (else false). g is the object of makeGrid.
   function chooseSpeed(g, v, model, vMax, leaderGap, leaderV, gapSig, p, p0, rand) {
     let w = Math.min(v + accelIncrement(model, v, g.cell, g.dtS, rand), vMax);
-    w = Math.min(w, leaderGap, gapSig);
+    w = Math.min(w, leaderGap);
     if (leaderGap !== Infinity) {
       const lt = leaderV <= TAIL_MAX ? tailTable(g.bCells)[leaderV] : tail(leaderV, g.bCells);
       w = Math.min(w, safeSpeed(leaderGap + lt, g.bCells, w));
     }
-    if (gapSig !== Infinity) w = Math.min(w, safeSpeed(gapSig, g.bCells, w));
+    if (gapSig !== Infinity) {
+      // Stop line: never beyond the line. Comfort braking, but a late car may
+      // brake with up to the firm deceleration (not harder).
+      const comfort = safeSpeed(gapSig, g.bCells, w);
+      w = Math.min(w, gapSig, Math.max(comfort, v - g.bMaxCells));
+    }
     w = Math.max(0, w);
     // Hard braking = the rules (before the random slowdown) need more than the
     // comfort deceleration. One random slowdown is tolerated on top: the lead
@@ -218,14 +246,38 @@
     const lastLine = lineX[N - 1];
     const exitX = lastLine + Math.ceil(RUNOUT_M / cell);
     const greens = nodes.map(n => (n.greenSegs || []).slice().sort((x, y) => x.start - y.start));
-    const isGreen = (j, tMs) => !!App.vehicle.greenAt(greens[j], tMs, tolMs);
+    // A followers sees the signal as green only during the real green. The
+    // yellow tolerance is extra legal time AFTER the green (like a yellow
+    // phase), not more green: a driver decides at the end of the green, not
+    // at the end of the tolerance.
+    const isGreen = (j, tMs) => !!App.vehicle.greenAt(greens[j], tMs, 0);
+    // Legal crossing windows: green (plus the yellow tolerance) and, if the
+    // node gives them (nodes[j].legalSegs), the real yellow phase after the
+    // green. A crossing outside of these windows is a red-light violation.
+    const legal = nodes.map((n, j) => (n.legalSegs ? n.legalSegs.slice().sort((x, y) => x.start - y.start) : greens[j]));
+    // null = legal crossing. Else { idx, tMs, afterS }: afterS = seconds since
+    // the last legal window ended (null if there was none).
+    // Seconds of legal time left at the node j at the time tMs (the yellow
+    // phase after the green), or 0.
+    const legalLeftS = (j, tMs) => {
+      const w = App.vehicle.greenAt(legal[j], tMs, tolMs);
+      return w ? Math.max(0, (w.end + tolMs - tMs) / 1000) : 0;
+    };
+    const redCrossing = (j, tc) => {
+      if (App.vehicle.greenAt(legal[j], tc, tolMs)) return null;
+      let last = null;
+      for (const g of legal[j]) if (g.end + tolMs <= tc) last = g;
+      return { idx: j, tMs: tc, afterS: last ? (tc - last.end - tolMs) / 1000 : null };
+    };
     const vMaxAt = (x) => {
       for (let j = N - 2; j > startIdx; j--) if (x >= lineX[j]) return vMaxCells[j];
       return vMaxCells[startIdx];
     };
 
-    // Window of the lead green at the start node (for the "first green" check).
-    const leadWin = App.vehicle.greenAt(greens[startIdx], tGreenStart, tolMs);
+    // End of the legal time (green and yellow) of the lead window at the start
+    // node. A car that crosses the first line until then is not "missed": it
+    // did not have to stop there.
+    const leadWin = App.vehicle.greenAt(legal[startIdx], tGreenStart, tolMs);
     const firstGreenEnd = leadWin ? leadWin.end + tolMs : tGreenStart;
 
     // Lead vehicle position in cells. It is an obstacle while it is on the road.
@@ -246,7 +298,8 @@
         x: -(i + 1) * (lenCells + g0Cells), v: 0, gone: false,
         factor: factors[i], model: App.vehicle.makeAccelModel(params, vTargetMax, factors[i]),
         committed: new Array(N).fill(false),
-        crossT: new Array(N).fill(null), stops: 0, trace: [], hardBrakes: 0, maxDecel: 0
+        crossT: new Array(N).fill(null), stops: 0, trace: [], hardBrakes: 0, maxDecel: 0,
+        redRuns: [], lateCrossings: 0
       });
     }
     const toStation = (x) => station0 + sign * x * cell;
@@ -277,13 +330,20 @@
         else if (!prev[i - 1].gone) { leaderX = prev[i - 1].x; leaderV = prev[i - 1].v; }
         const gapLead = leaderX == null ? Infinity : Math.max(0, leaderX - lenCells - g0Cells - x);
 
-        // Nearest red stop line ahead that the car can still stop at.
+        // Nearest stop line ahead at which the car must stop (see the rules in
+        // the header). A green signal or a stopped car clears a commitment.
         let gapSig = Infinity;
         for (let j = startIdx; j < N; j++) {
           if (x > lineX[j]) continue;                       // line already crossed
+          if (isGreen(j, tMs) || v === 0) c.committed[j] = false;
           if (isGreen(j, tMs) || c.committed[j]) continue;
           const d = lineX[j] - x;
-          if (tail(v, bCells) > d) { c.committed[j] = true; continue; }   // cannot stop: drives through
+          const left = legalLeftS(j, tMs);
+          // 1. It can reach the line within the yellow phase: drives on.
+          if (left > 0 && d * cell <= v * cell / dtS * left) { c.committed[j] = true; continue; }
+          // 3. It cannot stop even with firm braking: drives through (violation).
+          if (tail(v, grid.bMaxCells) > d) { c.committed[j] = true; continue; }
+          // 2. It stops at the line.
           gapSig = d;
           break;
         }
@@ -300,7 +360,11 @@
           if (c.crossT[j] == null && c.x > lineX[j]) {
             // Linear interpolation inside the step.
             const frac = c.x > x ? (lineX[j] + 0.5 - x) / (c.x - x) : 1;
-            c.crossT[j] = tMs + Math.min(1, Math.max(0, frac)) * STEP_MS;
+            const tc = tMs + Math.min(1, Math.max(0, frac)) * STEP_MS;
+            c.crossT[j] = tc;
+            const rc = redCrossing(j, tc);
+            if (rc) c.redRuns.push(rc);
+            else if (!App.vehicle.greenAt(greens[j], tc, 0)) c.lateCrossings++;   // legal, but after the green (yellow)
           }
         }
         if (c.x > exitX) c.gone = true;
@@ -318,7 +382,10 @@
       index: 0, isLead: true,
       cross0: leadCross0, crossLast: lead.reachedEnd ? lead.summary.tEnd : null,
       stops: lead.summary.stops, missedFirstGreen: false, finished: lead.reachedEnd,
-      travelS: lead.summary.travelS, hardBrakes: 0, maxDecelMs2: 0
+      travelS: lead.summary.travelS, hardBrakes: 0, maxDecelMs2: 0,
+      // The lead can only cross a signal without green if it cannot stop (redRun).
+      redRuns: lead.events.filter(e => e.redRun).map(e => redCrossing(e.idx, e.tArrive)).filter(Boolean),
+      lateCrossings: 0
     }];
     cars.forEach((c, i) => {
       const cross0 = c.crossT[startIdx];
@@ -329,7 +396,8 @@
         missedFirstGreen: cross0 == null || cross0 > firstGreenEnd,
         finished: crossLast != null,
         travelS: cross0 != null && crossLast != null ? (crossLast - cross0) / 1000 : null,
-        hardBrakes: c.hardBrakes, maxDecelMs2: c.maxDecel * cell / (dtS * dtS)
+        hardBrakes: c.hardBrakes, maxDecelMs2: c.maxDecel * cell / (dtS * dtS),
+        redRuns: c.redRuns, lateCrossings: c.lateCrossings
       });
     });
     list.forEach(c => {
@@ -346,6 +414,9 @@
       meanHeadwayS: headways.length ? headways.reduce((a, b) => a + b, 0) / headways.length : null,
       meanTravelS: travel.length ? travel.reduce((a, b) => a + b, 0) / travel.length : null,
       hardBrakeCount: list.reduce((s, c) => s + c.hardBrakes, 0),
+      redRunCount: list.reduce((s, c) => s + c.redRuns.length, 0),
+      redRunnerCount: list.filter(c => c.redRuns.length > 0).length,
+      lateCrossCount: list.reduce((s, c) => s + c.lateCrossings, 0),
       cellM: cell, bCells, lenCells, g0Cells, slowCells: grid.slowCells,
       spacingM: grid.spacingM, jamDensityPerKm: 1000 / grid.spacingM,
       accel: {
@@ -370,19 +441,24 @@
     const base = input.params.seed == null ? 1 : input.params.seed;
     const through = [];
     const missed = [];
+    const redRuns = [];
     for (let r = 0; r < runs; r++) {
       const res = simulate({ ...input, keepTrace: false, params: { ...input.params, seed: base + r } });
       through.push(res.summary.throughCount);
       missed.push(res.summary.missedFirstGreenCount);
+      redRuns.push(res.summary.redRunCount);
     }
     const sorted = through.slice().sort((a, b) => a - b);
     const q = (f) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * f)))];
     return {
       runs, mean: through.reduce((a, b) => a + b, 0) / runs,
       min: sorted[0], max: sorted[sorted.length - 1], p10: q(0.1), p90: q(0.9),
-      meanMissedFirstGreen: missed.reduce((a, b) => a + b, 0) / runs
+      meanMissedFirstGreen: missed.reduce((a, b) => a + b, 0) / runs,
+      // Red-light violations: mean per run and share of runs with at least one.
+      meanRedRuns: redRuns.reduce((a, b) => a + b, 0) / runs,
+      redRunShare: redRuns.filter(n => n > 0).length / runs
     };
   }
 
-  App.platoon = { simulate, runBatch, tail, safeSpeed, accelIncrement, chooseSpeed, makeGrid, mulberry32, DEFAULTS, CELL_M, SLOWDOWN_MS };
+  App.platoon = { simulate, runBatch, tail, safeSpeed, accelIncrement, chooseSpeed, makeGrid, mulberry32, DEFAULTS, CELL_M, SLOWDOWN_MS, MAX_DECEL_MS2 };
 })(window.App = window.App || {});

@@ -433,6 +433,14 @@
         const line = tr.map(p => X(p.station).toFixed(1) + ',' + Y(p.tMs).toFixed(1)).join(' ');
         plSvg += `<polyline points="${line}" fill="none" stroke="#5b6b8a" stroke-opacity="0.75" stroke-width="1.15" stroke-linejoin="round"/>`;
       });
+      // Red-light violations: a small hollow red ring where the line crosses a
+      // stop line after green and yellow. Discreet: small, thin, no label.
+      (platoon.marks || []).forEach(m => {
+        const mx = X(m.station), my = Y(m.tMs);
+        if (my < mT - 4 || my > mT + plotH + 4) return;
+        plSvg += `<circle cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="3.4" fill="#fff" fill-opacity="0.85" stroke="#c4220f" stroke-width="1.2" pointer-events="all">`
+          + `<title>Fahrzeug ${m.car}: Rotlichtverstoß an ${esc(m.node)}${m.afterS != null ? ', ' + m.afterS.toFixed(1) + ' s nach Ende von Grün/Gelb' : ''}</title></circle>`;
+      });
       svgInner += `<g clip-path="${clip}" pointer-events="none">${plSvg}</g>`;
     }
 

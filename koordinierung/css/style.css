@@ -236,9 +236,6 @@ footer {
 
 .analysis-accel-info { font-family: var(--mono); font-size: 11px; color: var(--text-muted); padding: var(--space-2) var(--space-4) 0; min-height: 18px; }
 
-/* - Fundamental diagram check (experimental, see fundamental.js) - */
-.fd-box { flex: 1 1 100%; padding-top: var(--space-2); }
-.fd-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.fd-summary { font-size: 13px; padding: var(--space-3) 0; }
-.fd-note { font-size: 11px; color: var(--text-faint); font-weight: 400; }
-.fd-current td { background: rgba(255, 122, 0, 0.08); font-weight: 700; }
+/* - Red-light violations in the platoon: discreet - */
+.redrun-note { color: #c4220f; opacity: 0.85; font-size: 11px; }
+.redrun-line { color: var(--text-faint); padding-bottom: 0; }

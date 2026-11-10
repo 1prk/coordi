@@ -107,16 +107,6 @@
     accelInfo: document.getElementById('accelInfo'),
     anaLen: document.getElementById('anaLen'),
     anaGap: document.getElementById('anaGap'),
-    fdBox: document.getElementById('fdBox'),
-    fdRun: document.getElementById('fdRun'),
-    fdInfo: document.getElementById('fdInfo'),
-    fdError: document.getElementById('fdError'),
-    fdResult: document.getElementById('fdResult'),
-    fdSummary: document.getElementById('fdSummary'),
-    fdCharts: document.getElementById('fdCharts'),
-    fdChecks: document.getElementById('fdChecks'),
-    fdSens: document.getElementById('fdSens'),
-    fdNote: document.getElementById('fdNote'),
     anaPlatoon: document.getElementById('anaPlatoon'),
     platoonParams: document.getElementById('platoonParams'),
     anaPN: document.getElementById('anaPN'),
@@ -128,6 +118,7 @@
     platoonKpis: document.getElementById('platoonKpis'),
     platoonCars: document.getElementById('platoonCars'),
     platoonNote: document.getElementById('platoonNote'),
+    platoonRed: document.getElementById('platoonRed'),
   };
 
   function showError(msg) {
@@ -666,6 +657,20 @@
     return total;
   }
 
+  // Legal crossing windows of a node: each green window, extended by the real
+  // yellow phase that follows it. If the data of the node has no yellow phase
+  // at all, DEFAULT_YELLOW_S is assumed (ITE: about 3.3 s at 50 km/h). The
+  // platoon uses them to tell a legal crossing in yellow from a red-light
+  // violation.
+  const DEFAULT_YELLOW_S = 3;
+  function legalWindows(greenSegs, yellowSegs) {
+    if (!yellowSegs.length) return greenSegs.map(g => ({ start: g.start, end: g.end + DEFAULT_YELLOW_S * 1000 }));
+    return greenSegs.map(g => {
+      const y = yellowSegs.find(q => Math.abs(q.start - g.end) <= 1500);
+      return { start: g.start, end: y ? y.end : g.end };
+    });
+  }
+
   function collectRows(dirKey) {
     const nodes = state.intersections;
     const rows = [];
@@ -711,6 +716,7 @@
         // für die Zeitleisten-Darstellung im Diagramm (echte Grünsegmente
         // über die gesamte Aufzeichnung statt eines wiederholten Medians).
         greenSegs: (n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN'),
+        legalSegs: legalWindows((n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN'), (n.segsByCol.get(col) || []).filter(s => s.cat === 'GELB')),
         tMin: n.times[0], tMax: n.times[n.times.length - 1],
         cycleStarts: n.cycleStarts, splPeriods: n.splPeriods,
         tracks
@@ -970,7 +976,7 @@
       if (!cyc) { analysisSel = null; return; }
       startIdx = 0; tGreenStart = cyc.start;
     }
-    const nodes = res.orderedRows.map(r => ({ name: r.name, station: r.station, greenSegs: r.greenSegs }));
+    const nodes = res.orderedRows.map(r => ({ name: r.name, station: r.station, greenSegs: r.greenSegs, legalSegs: r.legalSegs }));
     const p = analysisParams();
     try {
       const sim = App.vehicle.simulate({
@@ -987,7 +993,13 @@
           params: { accel: p.accel, accelProfile: p.profile, decel: p.decel, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray, ...pp }
         };
         try {
-          analysisPlatoon = { res: App.platoon.simulate(input), batch: App.platoon.runBatch(input, 40), startIdx, sign: sim.sign };
+          const pres = App.platoon.simulate(input);
+          // Red-light violations as small marks in the diagram (and a list for the panel).
+          const marks = [];
+          pres.cars.forEach(c => c.redRuns.forEach(r => marks.push({
+            station: nodes[r.idx].station, tMs: r.tMs, car: c.index + 1, node: nodes[r.idx].name, afterS: r.afterS
+          })));
+          analysisPlatoon = { res: pres, batch: App.platoon.runBatch(input, 40), startIdx, sign: sim.sign, marks };
         } catch (e) {
           analysisErr = 'Pulk (experimentell): ' + e.message;
         }
@@ -1005,7 +1017,7 @@
       selected: analysisSel ? { tag: analysisSel.tag, kind: analysisSel.kind, key: analysisSel.key } : null,
       vehicle: analysisSim ? { tag: analysisSim.tag, points: analysisSim.points, events: analysisSim.sim.events } : null,
       platoon: analysisPlatoon
-        ? { traces: analysisPlatoon.res.traces, sign: analysisPlatoon.sign, upstreamM: analysisPlatoon.startIdx === 0 ? analysisPlatoon.res.summary.queueLengthM : 0 }
+        ? { traces: analysisPlatoon.res.traces, marks: analysisPlatoon.marks, sign: analysisPlatoon.sign, upstreamM: analysisPlatoon.startIdx === 0 ? analysisPlatoon.res.summary.queueLengthM : 0 }
         : null,
       onBandClick: selectBand
     });
@@ -1037,8 +1049,9 @@
     if (analysisPlatoon) {
       els.platoonKpis.innerHTML = App.analysis.platoonKpiHtml(analysisPlatoon);
       els.platoonCars.innerHTML = App.analysis.platoonCarsHtml(analysisPlatoon, sim.tOrigin);
+      els.platoonRed.textContent = App.analysis.redRunText(analysisPlatoon);
       const s = analysisPlatoon.res.summary;
-      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m, Zeitschritt 1 s, Fahrzeuglänge ${(s.lenCells * s.cellM).toFixed(1)} m, Lücke im Stand ${(s.g0Cells * s.cellM).toFixed(1)} m (Front zu Front ${s.spacingM.toFixed(1)} m), Seed ${els.anaSeed.value || 1}. Die Beschleunigung folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten dieser Strecke validiert – siehe "Fundamentaldiagramm prüfen" für den Plausibilitätstest mit Literaturwerten.`;
+      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m, Zeitschritt 1 s, Fahrzeuglänge ${(s.lenCells * s.cellM).toFixed(1)} m, Lücke im Stand ${(s.g0Cells * s.cellM).toFixed(1)} m (Front zu Front ${s.spacingM.toFixed(1)} m), Seed ${els.anaSeed.value || 1}. Die Beschleunigung folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten dieser Strecke validiert.`;
     }
   }
 
@@ -1061,43 +1074,9 @@
     .forEach(el => el.addEventListener('change', refreshAnalysis));
   els.anaPlatoon.addEventListener('change', () => {
     els.platoonParams.style.display = els.anaPlatoon.checked ? '' : 'none';
-    els.fdBox.style.display = els.anaPlatoon.checked ? '' : 'none';
     refreshAnalysis();
   });
 
-  // EXPERIMENTAL plausibility check with the fundamental diagram (see
-  // fundamental.js). The ring road uses the current platoon parameters. The
-  // target speed is the field value, else the highest target speed of the
-  // selected band, else 50 km/h. The result stays on the screen. A change of a
-  // parameter marks it as outdated.
-  let fdShown = false;
-  function runFundamental() {
-    els.fdError.style.display = 'none';
-    try {
-      const p = analysisParams(), pp = platoonParams();
-      const target = p.target != null ? p.target : (analysisSim ? analysisSim.sim.accel.vTargetMaxKmh : 50);
-      const params = { accel: p.accel, accelProfile: p.profile, decel: p.decel, targetKmh: target, p: pp.p, p0: pp.p0, sigma: pp.sigma, lengthM: pp.lengthM, standGapM: pp.standGapM };
-      const fd = App.fundamental.compute(params);
-      const ev = App.fundamental.evaluate(fd);
-      const sens = App.fundamental.sensitivity(params, [1.5, 2.5, 3.5, 4.5, 5.5]);
-      els.fdResult.style.display = 'block';
-      els.fdSummary.textContent = `${ev.passed} von ${ev.checks.length} Prüfungen im Referenzbereich${ev.failed ? `, ${ev.failed} außerhalb` : ''}. Wunschgeschwindigkeit ${target.toFixed(0)} km/h, Abstand im Stand ${fd.spacingM.toFixed(1)} m (Front zu Front), Ring ${fd.ringM} m, ${fd.seeds} Läufe je Dichte.`;
-      els.fdChecks.innerHTML = App.analysis.fdChecksHtml(ev);
-      els.fdSens.innerHTML = App.analysis.fdSensHtml(sens, pp.standGapM);
-      els.fdNote.textContent = 'Die Referenzwerte stammen aus der Literatur (HCM-Sättigungsverkehrsstärke, Wellengeschwindigkeit 15 ± 5 km/h von Autobahnen, Beispiele für die Staudichte). Für eine einzelne Stadtstraße wurden keine belegten Werte gefunden; die Bänder sind Plausibilitätsspannen, keine Grenzwerte. Die Referenzwerte hängen untereinander zusammen (Dreiecksdiagramm): kleinere Fahrzeugabstände geben eine kleinere Wellengeschwindigkeit und eine höhere Kapazität, siehe die Tabelle zur Empfindlichkeit.';
-      App.analysis.renderFundamental(els.fdCharts, fd, ev);
-      els.fdInfo.textContent = 'Ringstraße ohne Signale · gleiche Regeln wie der Pulk';
-      fdShown = true;
-    } catch (e) {
-      els.fdError.textContent = 'Fundamentaldiagramm: ' + e.message;
-      els.fdError.style.display = 'block';
-    }
-  }
-  els.fdRun.addEventListener('click', runFundamental);
-  // A parameter change makes the shown result outdated.
-  [els.anaTarget, els.anaAccel, els.anaProfile, els.anaDecel, els.anaP, els.anaP0, els.anaSigma, els.anaLen, els.anaGap].forEach(el => {
-    el.addEventListener('change', () => { if (fdShown) els.fdInfo.textContent = 'Parameter geändert – bitte neu prüfen'; });
-  });
   els.anaReroll.addEventListener('click', () => {
     els.anaSeed.value = String(1 + Math.floor(Math.random() * 99999));
     refreshAnalysis();
