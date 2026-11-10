@@ -97,6 +97,8 @@
           </div>
           <div class="legend">
             <span class="item"><span class="swatch" style="background:var(--sig-green)"></span>Grünlage je Knoten</span>
+            <span class="item"><span class="swatch" style="background:var(--sig-yellow)"></span>Gelb (aus den Daten)</span>
+            <span class="item" title="Nur beim Pulk: hat ein Knoten kein Gelb in den Daten, werden 3 s nach jedem Grün angenommen"><span class="swatch" style="background:rgba(227,164,0,.35);border:1px dashed var(--sig-yellow);"></span>Gelb angenommen (Pulk)</span>
             <span class="item"><span class="swatch" style="background:var(--sig-red);height:3px;align-self:center;"></span>Sperrzeit</span>
             <span class="item"><span class="swatch" style="background:repeating-linear-gradient(90deg,var(--text-faint) 0 3px,transparent 3px 6px);height:2px;align-self:center;"></span>Teilpunkt-Raster</span>
             <span class="item"><span class="swatch" style="background:#5b6b8a;height:2px;align-self:center;"></span>Fahrzeugpulk (experimentell)</span>
@@ -190,7 +192,7 @@
           <div class="analysis-params platoon-params" id="platoonParams" style="display:none;">
             <div class="field">
               <label>Fahrzeuge im Pulk (mit Führungsfahrzeug)</label>
-              <input class="input" type="number" min="2" max="30" step="1" id="anaPN" value="8">
+              <input class="input" type="number" min="2" max="150" step="1" id="anaPN" value="8">
             </div>
             <div class="field">
               <label>Trödeln p</label>

@@ -716,6 +716,13 @@
         // für die Zeitleisten-Darstellung im Diagramm (echte Grünsegmente
         // über die gesamte Aufzeichnung statt eines wiederholten Medians).
         greenSegs: (n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN'),
+        // Real yellow phases (state 4, 8, 12) from the data. If the node has none,
+        // the platoon assumes DEFAULT_YELLOW_S after each green (see legalWindows).
+        // The diagram draws the assumed yellow in a different style, and only
+        // when the platoon is shown.
+        yellowSegs: (n.segsByCol.get(col) || []).filter(s => s.cat === 'GELB'),
+        yellowAssumedSegs: (n.segsByCol.get(col) || []).some(s => s.cat === 'GELB') ? []
+          : (n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN').map(g => ({ start: g.end, end: g.end + DEFAULT_YELLOW_S * 1000 })),
         legalSegs: legalWindows((n.segsByCol.get(col) || []).filter(s => s.cat === 'GRUEN'), (n.segsByCol.get(col) || []).filter(s => s.cat === 'GELB')),
         tMin: n.times[0], tMax: n.times[n.times.length - 1],
         cycleStarts: n.cycleStarts, splPeriods: n.splPeriods,
@@ -952,7 +959,7 @@
     const D = App.platoon.DEFAULTS;
     const num = (el, def) => (el.value.trim() === '' || !Number.isFinite(Number(el.value)) ? def : Number(el.value));
     return {
-      nCars: Math.round(num(els.anaPN, D.nCars)), p: num(els.anaP, D.p), p0: num(els.anaP0, D.p0),
+      nCars: Math.min(150, Math.max(2, Math.round(num(els.anaPN, D.nCars)))), p: num(els.anaP, D.p), p0: num(els.anaP0, D.p0),
       sigma: Math.max(0, num(els.anaSigma, D.sigma * 100)) / 100,
       lengthM: num(els.anaLen, D.lengthM), standGapM: num(els.anaGap, D.standGapM),
       seed: Math.max(0, Math.round(num(els.anaSeed, D.seed)))
@@ -999,7 +1006,7 @@
           pres.cars.forEach(c => c.redRuns.forEach(r => marks.push({
             station: nodes[r.idx].station, tMs: r.tMs, car: c.index + 1, node: nodes[r.idx].name, afterS: r.afterS
           })));
-          analysisPlatoon = { res: pres, batch: App.platoon.runBatch(input, 40), startIdx, sign: sim.sign, marks };
+          analysisPlatoon = { res: pres, batch: App.platoon.runBatch(input, pp.nCars > 100 ? 20 : 40), startIdx, sign: sim.sign, marks };
         } catch (e) {
           analysisErr = 'Pulk (experimentell): ' + e.message;
         }
@@ -1051,7 +1058,9 @@
       els.platoonCars.innerHTML = App.analysis.platoonCarsHtml(analysisPlatoon, sim.tOrigin);
       els.platoonRed.textContent = App.analysis.redRunText(analysisPlatoon);
       const s = analysisPlatoon.res.summary;
-      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m, Zeitschritt 1 s, Fahrzeuglänge ${(s.lenCells * s.cellM).toFixed(1)} m, Lücke im Stand ${(s.g0Cells * s.cellM).toFixed(1)} m (Front zu Front ${s.spacingM.toFixed(1)} m), Seed ${els.anaSeed.value || 1}. Die Beschleunigung folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten dieser Strecke validiert.`;
+      const clipped = diagramApi && diagramApi.queueClipped
+        ? ` Der Rückstau (${s.queueLengthM.toFixed(0)} m) reicht über den linken Diagrammrand hinaus; die Fahrzeuge dahinter erscheinen, sobald sie anfahren.` : '';
+      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m, Zeitschritt 1 s, Fahrzeuglänge ${(s.lenCells * s.cellM).toFixed(1)} m, Lücke im Stand ${(s.g0Cells * s.cellM).toFixed(1)} m (Front zu Front ${s.spacingM.toFixed(1)} m), Seed ${els.anaSeed.value || 1}. Die Beschleunigung folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor. Ergebnis ist ein Zufallslauf; die Statistik fasst ${analysisPlatoon.batch.runs} Läufe zusammen. Nicht an Messdaten dieser Strecke validiert.${clipped}`;
     }
   }
 

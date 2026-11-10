@@ -20,6 +20,7 @@
   --accent: var(--color-accent);
   --sig-red: var(--color-accent);
   --sig-green: #2f6b3c;
+  --sig-yellow: #e3a400;
   --mono: Consolas, "Cascadia Mono", ui-monospace, "Courier New", monospace;
 }
 

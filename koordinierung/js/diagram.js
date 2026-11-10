@@ -73,7 +73,13 @@
     // Experimental platoon: the standing queue lies upstream of the start node.
     // The station axis gets extra room on that side, so the queue is visible.
     const platoon = o.platoon || null;
-    const queuePad = platoon && platoon.upstreamM > 0 ? platoon.upstreamM + 6 : 0;
+    // The extra room is capped (6 % of the corridor, at least 40 m), so a big
+    // platoon does not stretch the diagram: the axis is the same for every
+    // platoon that is longer than the cap. Cars further back are cut off at the
+    // left edge and appear when they drive off.
+    const wantedPad = platoon && platoon.upstreamM > 0 ? platoon.upstreamM + 6 : 0;
+    const queuePad = Math.min(wantedPad, Math.max(40, 0.06 * corridor));
+    const queueClipped = !!platoon && platoon.upstreamM > queuePad + 1e-9;
     const sMinPlot = sMin - STATION_VISUAL_BUFFER_M - (platoon && platoon.sign > 0 ? queuePad : 0);
     const sMaxPlot = sMax + STATION_VISUAL_BUFFER_M + (platoon && platoon.sign < 0 ? queuePad : 0);
 
@@ -328,6 +334,23 @@
         const yTop = Y(Math.min(r.tMax, globalTMax)), yBot = Y(Math.max(r.tMin, globalTMin));
         svgInner += `<line x1="${x.toFixed(1)}" y1="${yTop.toFixed(1)}" x2="${x.toFixed(1)}" y2="${yBot.toFixed(1)}" stroke="var(--sig-red)" stroke-width="2.5"><title>${esc(r.name)} (${d.tag}): Aufzeichnung ${fmtDateTimeShort(r.tMin)} – ${fmtDateTimeShort(r.tMax)}</title></line>`;
         let overlay = '';
+        // Yellow phases (time runs upwards, so the yellow bar lies directly
+        // above the green bar). Real yellow from the data: solid amber. Assumed
+        // yellow (the node gives none, the platoon needs one): pale, dashed
+        // outline, only drawn while the platoon is shown. Without it a car that
+        // crosses shortly after the green would look like a red-light runner.
+        const yellowReal = r.yellowSegs || [];
+        const yellowDrawn = (list, assumed) => list.forEach(seg => {
+          const ys = Y(seg.end), ye = Y(seg.start);
+          if (ye < mT || ys > mT + plotH) return;
+          const h = Math.max(1, ye - ys);
+          overlay += assumed
+            ? `<rect x="${(x - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${h.toFixed(1)}" fill="var(--sig-yellow)" fill-opacity="0.35" stroke="var(--sig-yellow)" stroke-width="0.8" stroke-dasharray="2 1.5"><title>${esc(r.name)} (${d.tag}): Gelb ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)} (angenommen, die Daten enthalten kein Gelb)</title></rect>`
+            : `<rect x="${(x - 3).toFixed(1)}" y="${ys.toFixed(1)}" width="6" height="${h.toFixed(1)}" fill="var(--sig-yellow)"><title>${esc(r.name)} (${d.tag}): Gelb ${fmtTimeShort(seg.start)}–${fmtTimeShort(seg.end)} (${Math.round((seg.end - seg.start) / 1000)} s)</title></rect>`;
+        });
+        yellowDrawn(yellowReal, false);
+        if (platoon) yellowDrawn(r.yellowAssumedSegs || [], true);
+        const yellowAfter = (greenEnd) => [...yellowReal, ...(platoon ? (r.yellowAssumedSegs || []) : [])].find(q => Math.abs(q.start - greenEnd) <= 1500);
         (r.greenSegs || []).forEach(seg => {
           const ys = Y(seg.end), ye = Y(seg.start);
           if (ye < mT || ys > mT + plotH) return;
@@ -344,7 +367,10 @@
             const tf = Math.round((seg.end - seg.start) / 1000);
             const ab = an + tf;
             overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ye + 7).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${an}</text>`;
-            overlay += `<text x="${(x + 6).toFixed(1)}" y="${(ys - 2).toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${ab}</text>`;
+            // The "ab" label stays above the yellow bar that follows the green.
+            const yAfter = yellowAfter(seg.end);
+            const yAb = yAfter ? Y(yAfter.end) - 2 : ys - 2;
+            overlay += `<text x="${(x + 6).toFixed(1)}" y="${yAb.toFixed(1)}" font-size="7.5" fill="var(--text-faint)">${ab}</text>`;
           }
         });
         // Zugeordnete Det/APW-Spuren dieser Signalgruppe (siehe Setup-Tab,
@@ -640,7 +666,7 @@
       vehMarkerEl.setAttribute('opacity', '1');
     }
 
-    return { scrollToTime, setVehicleMarker };
+    return { scrollToTime, setVehicleMarker, queueClipped };
   }
 
   App.diagram = { renderDiagram };
