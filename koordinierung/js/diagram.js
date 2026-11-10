@@ -139,14 +139,15 @@
       }
     };
     // Helpers for the clickable band polygons. A band polygon carries its
-    // identity in data attributes. The selected band gets an orange outline.
+    // identity in data attributes. When a band is selected, all other bands
+    // fade out. One outline for the whole selected band is drawn later
+    // (see "Selected band outline").
     const isSel = (tag, kind, key) => !!selected && selected.tag === tag && selected.kind === kind && String(selected.key) === String(key);
     const bandAttrs = (tag, kind, key, segIdx) =>
-      ` data-band="1" data-tag="${tag}" data-kind="${kind}" data-key="${key}" data-seg="${segIdx}" style="cursor:pointer"`;
+      ` data-band="1" data-tag="${tag}" data-kind="${kind}" data-key="${key}" data-seg="${segIdx}" style="cursor:pointer"`
+      + (selected && !isSel(tag, kind, key) ? ' opacity="0.28"' : '');
     const strokeAttrs = (tag, kind, key, color, width, dash) =>
-      isSel(tag, kind, key)
-        ? `stroke="#ff7a00" stroke-width="3.2"${dash ? ` stroke-dasharray="${dash}"` : ''}`
-        : `stroke="${color}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}"` : ''}`;
+      `stroke="${color}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}"` : ''}`;
 
     // APW-Wert 0 ist laut OCIT-Spezifikation ein Sonderfall, keine "normale"
     // Zahl wie jeder andere Wert (und ausdrücklich etwas anderes als "kein
@@ -381,29 +382,74 @@
       });
     });
 
+    // Selected band outline: ONE closed outline around the whole band (all
+    // sections), not one outline for each section polygon. A wide, faint
+    // orange stroke below a thin orange stroke gives a soft glow.
+    if (selected) {
+      const d = dirs.find(x => x.tag === selected.tag);
+      let outline = null;
+      if (d && selected.kind === 'qual' && d.qualitativeBand) {
+        const [si, oi] = String(selected.key).split(':').map(Number);
+        const seg = d.qualitativeBand.segments[si];
+        const occ = seg && seg.occurrences[oi];
+        if (occ) {
+          outline = [[X(seg.a.station), Y(occ.frontStart)], [X(seg.b.station), Y(occ.backStart)],
+            [X(seg.b.station), Y(occ.backEnd)], [X(seg.a.station), Y(occ.frontEnd)]];
+        }
+      } else if (d && d.optimumBand) {
+        // The back edge of one section is the front edge of the next section,
+        // so the lower and the upper edge are continuous lines over all nodes.
+        const lower = [], upper = [];
+        d.optimumBand.segments.forEach(seg => {
+          const list = selected.kind === 'opt' ? seg.runs : seg.partialRuns;
+          const run = list.find(r => String(selected.kind === 'opt' ? r.origin : r.cycleIdx) === String(selected.key));
+          if (!run) return;
+          const xA = X(seg.a.station), xB = X(seg.b.station);
+          if (!lower.length) { lower.push([xA, Y(run.frontStart)]); upper.push([xA, Y(run.frontEnd)]); }
+          lower.push([xB, Y(run.backStart)]); upper.push([xB, Y(run.backEnd)]);
+        });
+        if (lower.length > 1) outline = lower.concat(upper.reverse());
+      }
+      if (outline) {
+        const pts = outline.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+        svgInner += `<g clip-path="${clip}" pointer-events="none">`
+          + `<polygon points="${pts}" fill="#ff7a00" fill-opacity="0.07" stroke="#ff7a00" stroke-opacity="0.28" stroke-width="7" stroke-linejoin="round"/>`
+          + `<polygon points="${pts}" fill="none" stroke="#ff7a00" stroke-width="1.8" stroke-linejoin="round"/></g>`;
+      }
+    }
+
     // Simulated vehicle (see vehicle.js): the trajectory is a polyline of
-    // (station, time). A white line below the black line keeps it readable on
-    // top of the hatched bands. A red dot marks a stop at a stop line. A white
-    // dot marks a pass without a stop. The overlay ignores the mouse, so a
-    // click still reaches the band below it.
+    // (station, time). A thin white line below the dark line keeps it readable
+    // on the hatched bands. Each node that the vehicle reaches gets a small
+    // label above-left of the node line: the speed for a pass, or "Halt" with
+    // the wait time for a stop. A dot marks the exact point. The overlay
+    // ignores the mouse, so a click still reaches the band below it.
     if (vehicle && vehicle.points && vehicle.points.length > 1) {
       const line = vehicle.points.map(p => X(p.station).toFixed(1) + ',' + Y(p.tMs).toFixed(1)).join(' ');
-      let vSvg = `<polyline points="${line}" fill="none" stroke="#fff" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round"/>`
-        + `<polyline points="${line}" fill="none" stroke="#000" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+      let vSvg = `<polyline points="${line}" fill="none" stroke="#fff" stroke-opacity="0.85" stroke-width="4.6" stroke-linejoin="round" stroke-linecap="round"/>`
+        + `<polyline points="${line}" fill="none" stroke="#14181f" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
       const p0 = vehicle.points[0];
-      vSvg += `<circle cx="${X(p0.station).toFixed(1)}" cy="${Y(p0.tMs).toFixed(1)}" r="4.5" fill="#000" stroke="#fff" stroke-width="1.5"/>`;
+      vSvg += `<circle cx="${X(p0.station).toFixed(1)}" cy="${Y(p0.tMs).toFixed(1)}" r="4" fill="#14181f" stroke="#fff" stroke-width="1.5"/>`;
+      const pill = (x, y, text, color) => {
+        const w = text.length * 5.4 + 12;
+        const x1 = Math.max(mL + 2, x - 9 - w);
+        return `<rect x="${x1.toFixed(1)}" y="${(y - 20).toFixed(1)}" width="${w.toFixed(1)}" height="15" rx="7.5" fill="#fff" fill-opacity="0.94" stroke="${color}" stroke-width="1"/>`
+          + `<text x="${(x1 + w / 2).toFixed(1)}" y="${(y - 9.5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="${color}">${esc(text)}</text>`;
+      };
       (vehicle.events || []).forEach(ev => {
-        const cx = X(ev.station).toFixed(1), cy = Y(ev.tArrive).toFixed(1);
+        const cx = X(ev.station), cy = Y(ev.tArrive);
         const label = ev.stopped
           ? `${esc(ev.name)}: Halt bei Rot${ev.waitS != null ? ', Wartezeit ' + ev.waitS.toFixed(0) + ' s' : ''}`
           : `${esc(ev.name)}: Durchfahrt mit ${(ev.vArrive * 3.6).toFixed(0)} km/h`;
         vSvg += ev.stopped
-          ? `<circle cx="${cx}" cy="${cy}" r="5" fill="var(--sig-red)" stroke="#fff" stroke-width="1.5"><title>${label}</title></circle>`
-          : `<circle cx="${cx}" cy="${cy}" r="3.5" fill="#fff" stroke="#000" stroke-width="1.5"><title>${label}</title></circle>`;
+          ? `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4.5" fill="var(--sig-red)" stroke="#fff" stroke-width="1.5"><title>${label}</title></circle>`
+          : `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.2" fill="#fff" stroke="#14181f" stroke-width="1.4"><title>${label}</title></circle>`;
+        const text = ev.stopped ? (ev.waitS != null ? `Halt ${ev.waitS.toFixed(0)} s` : 'Halt') : `${(ev.vArrive * 3.6).toFixed(0)} km/h`;
+        if (cy > mT - 10 && cy < mT + plotH + 10) vSvg += pill(cx, cy, text, ev.stopped ? '#c4220f' : '#14181f');
       });
       svgInner += `<g clip-path="${clip}" pointer-events="none">${vSvg}</g>`;
       // Marker that follows the mouse in the analysis charts (see setVehicleMarker).
-      svgInner += `<circle id="vehMarker" r="5.5" fill="#ff9800" stroke="#000" stroke-width="1.5" opacity="0" pointer-events="none"/>`;
+      svgInner += `<circle id="vehMarker" r="5.5" fill="#ff9800" stroke="#14181f" stroke-width="1.5" opacity="0" pointer-events="none"/>`;
     }
 
     // Horizontale Orientierungslinie, die der Maus beim Überfahren des
