@@ -105,6 +105,18 @@
     anaProfile: document.getElementById('anaProfile'),
     anaSigma: document.getElementById('anaSigma'),
     accelInfo: document.getElementById('accelInfo'),
+    anaLen: document.getElementById('anaLen'),
+    anaGap: document.getElementById('anaGap'),
+    fdBox: document.getElementById('fdBox'),
+    fdRun: document.getElementById('fdRun'),
+    fdInfo: document.getElementById('fdInfo'),
+    fdError: document.getElementById('fdError'),
+    fdResult: document.getElementById('fdResult'),
+    fdSummary: document.getElementById('fdSummary'),
+    fdCharts: document.getElementById('fdCharts'),
+    fdChecks: document.getElementById('fdChecks'),
+    fdSens: document.getElementById('fdSens'),
+    fdNote: document.getElementById('fdNote'),
     anaPlatoon: document.getElementById('anaPlatoon'),
     platoonParams: document.getElementById('platoonParams'),
     anaPN: document.getElementById('anaPN'),
@@ -936,6 +948,7 @@
     return {
       nCars: Math.round(num(els.anaPN, D.nCars)), p: num(els.anaP, D.p), p0: num(els.anaP0, D.p0),
       sigma: Math.max(0, num(els.anaSigma, D.sigma * 100)) / 100,
+      lengthM: num(els.anaLen, D.lengthM), standGapM: num(els.anaGap, D.standGapM),
       seed: Math.max(0, Math.round(num(els.anaSeed, D.seed)))
     };
   }
@@ -1025,7 +1038,7 @@
       els.platoonKpis.innerHTML = App.analysis.platoonKpiHtml(analysisPlatoon);
       els.platoonCars.innerHTML = App.analysis.platoonCarsHtml(analysisPlatoon, sim.tOrigin);
       const s = analysisPlatoon.res.summary;
-      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m (so gewählt, dass eine Zelle je Sekunde² der mittleren Beschleunigung entspricht; die Beschleunigung selbst folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor), Fahrzeuglänge ${s.lenCells} Zellen, Zeitschritt 1 s, Seed ${els.anaSeed.value || 1}. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten validiert.`;
+      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m, Zeitschritt 1 s, Fahrzeuglänge ${(s.lenCells * s.cellM).toFixed(1)} m, Lücke im Stand ${(s.g0Cells * s.cellM).toFixed(1)} m (Front zu Front ${s.spacingM.toFixed(1)} m), Seed ${els.anaSeed.value || 1}. Die Beschleunigung folgt dem gewählten Profil, jeder Fahrer hat einen eigenen Faktor. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten dieser Strecke validiert – siehe "Fundamentaldiagramm prüfen" für den Plausibilitätstest mit Literaturwerten.`;
     }
   }
 
@@ -1044,11 +1057,46 @@
   }
 
   els.analysisClear.addEventListener('click', () => { analysisSel = null; refreshAnalysis(); });
-  [els.anaTarget, els.anaAccel, els.anaProfile, els.anaDecel, els.anaLost, els.anaYellow, els.anaPN, els.anaP, els.anaP0, els.anaSigma, els.anaSeed]
+  [els.anaTarget, els.anaAccel, els.anaProfile, els.anaDecel, els.anaLost, els.anaYellow, els.anaPN, els.anaP, els.anaP0, els.anaSigma, els.anaLen, els.anaGap, els.anaSeed]
     .forEach(el => el.addEventListener('change', refreshAnalysis));
   els.anaPlatoon.addEventListener('change', () => {
     els.platoonParams.style.display = els.anaPlatoon.checked ? '' : 'none';
+    els.fdBox.style.display = els.anaPlatoon.checked ? '' : 'none';
     refreshAnalysis();
+  });
+
+  // EXPERIMENTAL plausibility check with the fundamental diagram (see
+  // fundamental.js). The ring road uses the current platoon parameters. The
+  // target speed is the field value, else the highest target speed of the
+  // selected band, else 50 km/h. The result stays on the screen. A change of a
+  // parameter marks it as outdated.
+  let fdShown = false;
+  function runFundamental() {
+    els.fdError.style.display = 'none';
+    try {
+      const p = analysisParams(), pp = platoonParams();
+      const target = p.target != null ? p.target : (analysisSim ? analysisSim.sim.accel.vTargetMaxKmh : 50);
+      const params = { accel: p.accel, accelProfile: p.profile, decel: p.decel, targetKmh: target, p: pp.p, p0: pp.p0, sigma: pp.sigma, lengthM: pp.lengthM, standGapM: pp.standGapM };
+      const fd = App.fundamental.compute(params);
+      const ev = App.fundamental.evaluate(fd);
+      const sens = App.fundamental.sensitivity(params, [1.5, 2.5, 3.5, 4.5, 5.5]);
+      els.fdResult.style.display = 'block';
+      els.fdSummary.textContent = `${ev.passed} von ${ev.checks.length} Prüfungen im Referenzbereich${ev.failed ? `, ${ev.failed} außerhalb` : ''}. Wunschgeschwindigkeit ${target.toFixed(0)} km/h, Abstand im Stand ${fd.spacingM.toFixed(1)} m (Front zu Front), Ring ${fd.ringM} m, ${fd.seeds} Läufe je Dichte.`;
+      els.fdChecks.innerHTML = App.analysis.fdChecksHtml(ev);
+      els.fdSens.innerHTML = App.analysis.fdSensHtml(sens, pp.standGapM);
+      els.fdNote.textContent = 'Die Referenzwerte stammen aus der Literatur (HCM-Sättigungsverkehrsstärke, Wellengeschwindigkeit 15 ± 5 km/h von Autobahnen, Beispiele für die Staudichte). Für eine einzelne Stadtstraße wurden keine belegten Werte gefunden; die Bänder sind Plausibilitätsspannen, keine Grenzwerte. Die Referenzwerte hängen untereinander zusammen (Dreiecksdiagramm): kleinere Fahrzeugabstände geben eine kleinere Wellengeschwindigkeit und eine höhere Kapazität, siehe die Tabelle zur Empfindlichkeit.';
+      App.analysis.renderFundamental(els.fdCharts, fd, ev);
+      els.fdInfo.textContent = 'Ringstraße ohne Signale · gleiche Regeln wie der Pulk';
+      fdShown = true;
+    } catch (e) {
+      els.fdError.textContent = 'Fundamentaldiagramm: ' + e.message;
+      els.fdError.style.display = 'block';
+    }
+  }
+  els.fdRun.addEventListener('click', runFundamental);
+  // A parameter change makes the shown result outdated.
+  [els.anaTarget, els.anaAccel, els.anaProfile, els.anaDecel, els.anaP, els.anaP0, els.anaSigma, els.anaLen, els.anaGap].forEach(el => {
+    el.addEventListener('change', () => { if (fdShown) els.fdInfo.textContent = 'Parameter geändert – bitte neu prüfen'; });
   });
   els.anaReroll.addEventListener('click', () => {
     els.anaSeed.value = String(1 + Math.floor(Math.random() * 99999));

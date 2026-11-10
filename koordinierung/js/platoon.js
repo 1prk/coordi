@@ -34,10 +34,24 @@
    vehicle dynamics model (normal distribution, mean 0.60, sd 0.08, so 13 %
    relative spread). The lead vehicle has the nominal factor 1.
 
-   Units: the cell length is set so that an acceleration of one cell per step
-   is the MEAN acceleration of the user (cell = a * 1 s * 1 s). The speed grid
-   is then a * 1 s. Target speeds are rounded to this grid. This model is
-   experimental. Results are one random sample. Use runBatch for statistics.
+   Units: the cell is CELL_M = 0.5 m, the time step is 1 s, so one cell per
+   step is 0.5 m/s. All model constants keep their physical meaning, they do
+   not depend on the cell: the random slowdown removes SLOWDOWN_MS = 1.5 m/s
+   (one cell per step on the 1.5 m grid of Knospe et al. 2000), braking and
+   acceleration are given in m/s2. Target speeds are rounded to the 0.5 m/s
+   grid.
+
+   Distances between vehicles (assumptions, all can be changed):
+   - vehicle length lengthM (default 4.5 m, a typical passenger car);
+   - standstill gap standGapM (default 3.5 m). Long 2002 (TRR 1796) measured
+     an average gap of 3.66 m between queued vehicles. The queue spacing front
+     to front is lengthM + standGapM (default 8.0 m). Long also found that the
+     often used design value of 7.6 m (25 ft) per queued vehicle is too low.
+   - at speed the car keeps at least the distance it covers in one time step
+     (hard rule v <= gap) plus the comfort braking distance (see rule 2).
+   This model is experimental. Results are one random sample. Use runBatch for
+   statistics and the fundamental diagram (fundamental.js) for a plausibility
+   check of the model.
 
    Sources of the method (checked by web search; the original papers could
    not be opened in the build environment, so the exact rule text comes from
@@ -57,7 +71,8 @@
   'use strict';
 
   const STEP_MS = 1000;
-  const VEH_LEN_M = 7.5;        // effective vehicle length (vehicle + standstill gap)
+  const CELL_M = 0.5;           // cell length
+  const SLOWDOWN_MS = 1.5;      // speed lost in one random slowdown [m/s]
   const MAX_STEPS = 1500;       // upper limit of the simulated time (seconds)
   const RUNOUT_M = 150;         // cars drive on this far behind the last node
 
@@ -65,7 +80,24 @@
   // discharges with a steady headway of about 2.0 s per vehicle (HCM ideal
   // saturation flow 1800 veh/h/lane). Without randomization the headway
   // would be 1.6 s (too fast). With p = 0.05 and p0 = 0.2 it is 2.0 s.
-  const DEFAULTS = { p: 0.05, p0: 0.2, nCars: 8, seed: 1, sigma: 0.13 };
+  const DEFAULTS = { p: 0.05, p0: 0.2, nCars: 8, seed: 1, sigma: 0.13, lengthM: 4.5, standGapM: 3.5 };
+
+  // Grid constants for one run. All values in cells and steps of 1 s.
+  function makeGrid(params) {
+    const cell = CELL_M, dtS = STEP_MS / 1000;
+    const D = DEFAULTS;
+    const lengthM = Number.isFinite(Number(params.lengthM)) && Number(params.lengthM) > 0 ? Number(params.lengthM) : D.lengthM;
+    const standGapM = Number.isFinite(Number(params.standGapM)) && Number(params.standGapM) >= 0 ? Number(params.standGapM) : D.standGapM;
+    const lenCells = Math.max(1, Math.round(lengthM / cell));
+    const g0Cells = Math.max(0, Math.round(standGapM / cell));
+    return {
+      cell, dtS,
+      bCells: Math.max(1, Math.round(params.decel * dtS * dtS / cell)),
+      slowCells: Math.max(1, Math.round(SLOWDOWN_MS * dtS / cell)),
+      lenCells, g0Cells,
+      spacingM: (lenCells + g0Cells) * cell
+    };
+  }
 
   // Random number generator with a seed (same seed = same result).
   function mulberry32(seed) {
@@ -87,6 +119,15 @@
     return m > 0 ? m * v - b * m * (m + 1) / 2 : 0;
   }
 
+  // Table of tail(v, b) for v = 0..TAIL_MAX (speeds in cells per step).
+  const TAIL_MAX = 400;
+  const tailTables = new Map();
+  function tailTable(b) {
+    let t = tailTables.get(b);
+    if (!t) { t = new Float64Array(TAIL_MAX + 1); for (let v = 0; v <= TAIL_MAX; v++) t[v] = tail(v, b); tailTables.set(b, t); }
+    return t;
+  }
+
   // Acceleration of one car in whole cells for this step. The model gives the
   // acceleration in m/s2 for the current speed. A fraction of a cell is
   // rounded up with the probability of the fraction (stochastic rounding),
@@ -101,8 +142,35 @@
   // stop within the budget (cells) with the deceleration b.
   function safeSpeed(budget, b, wMax) {
     if (budget <= 0) return 0;
+    const t = tailTable(b);
     let w = wMax;
-    while (w > 0 && w + tail(w, b) > budget) w--;
+    if (w > TAIL_MAX) { while (w > TAIL_MAX) w--; }
+    while (w > 0 && w + t[w] > budget) w--;
+    return w;
+  }
+
+  // The speed update of ONE car for the next step (rules 1 to 3). Both the
+  // platoon simulation and the ring road of the fundamental diagram use this
+  // function, so the diagram checks exactly the rules of the platoon.
+  //   v: speed [cells/step]. vMax: speed limit of the section [cells/step].
+  //   leaderGap: free cells to the leader after the standstill gap, or Infinity.
+  //   leaderV: speed of the leader. gapSig: free cells to a red stop line, or Infinity.
+  // Returns the new speed w. It sets g.hard = true if the car brakes harder
+  // than the comfort value (else false). g is the object of makeGrid.
+  function chooseSpeed(g, v, model, vMax, leaderGap, leaderV, gapSig, p, p0, rand) {
+    let w = Math.min(v + accelIncrement(model, v, g.cell, g.dtS, rand), vMax);
+    w = Math.min(w, leaderGap, gapSig);
+    if (leaderGap !== Infinity) {
+      const lt = leaderV <= TAIL_MAX ? tailTable(g.bCells)[leaderV] : tail(leaderV, g.bCells);
+      w = Math.min(w, safeSpeed(leaderGap + lt, g.bCells, w));
+    }
+    if (gapSig !== Infinity) w = Math.min(w, safeSpeed(gapSig, g.bCells, w));
+    w = Math.max(0, w);
+    // Hard braking = the rules (before the random slowdown) need more than the
+    // comfort deceleration. One random slowdown is tolerated on top: the lead
+    // position is rounded to the grid, and a leader can slow down randomly.
+    g.hard = v - w > g.bCells + g.slowCells;
+    if (w > 0 && rand() < (v === 0 ? p0 : p)) w = Math.max(0, w - g.slowCells);
     return w;
   }
 
@@ -110,7 +178,8 @@
   //   nodes, startIdx, tGreenStart: as for App.vehicle.simulate.
   //   lead: result of App.vehicle.simulate (the deterministic lead vehicle).
   //   params: { accel (mean), accelProfile, decel, yellowTolS, targetKmh,
-  //             nCars (lead + followers), p, p0, sigma (driver spread), seed }
+  //             nCars (lead + followers), p, p0, sigma (driver spread), seed,
+  //             lengthM, standGapM (distances between vehicles) }
   //   keepTrace: false = no point lists (used by runBatch).
   function simulate(input) {
     const { nodes, startIdx, tGreenStart, lead, params } = input;
@@ -124,10 +193,8 @@
     const tolMs = Math.max(0, Number(params.yellowTolS) || 0) * 1000;
     const dtS = STEP_MS / 1000;
 
-    // Grid: one cell per step of acceleration = the acceleration of the user.
-    const cell = Math.min(3, Math.max(0.5, params.accel * dtS * dtS));
-    const bCells = Math.max(1, Math.round(params.decel * dtS * dtS / cell));
-    const lenCells = Math.max(1, Math.round(VEH_LEN_M / cell));
+    const grid = makeGrid(params);
+    const { cell, bCells, lenCells, g0Cells } = grid;
     const sign = lead.sign;
     const station0 = nodes[startIdx].station;
 
@@ -176,7 +243,7 @@
     const cars = [];
     for (let i = 0; i < nF; i++) {
       cars.push({
-        x: -(i + 1) * lenCells, v: 0, gone: false,
+        x: -(i + 1) * (lenCells + g0Cells), v: 0, gone: false,
         factor: factors[i], model: App.vehicle.makeAccelModel(params, vTargetMax, factors[i]),
         committed: new Array(N).fill(false),
         crossT: new Array(N).fill(null), stops: 0, trace: [], hardBrakes: 0, maxDecel: 0
@@ -208,7 +275,7 @@
         let leaderX = null, leaderV = 0;
         if (i === 0) { if (leadOn) { leaderX = xl; leaderV = vl; } }
         else if (!prev[i - 1].gone) { leaderX = prev[i - 1].x; leaderV = prev[i - 1].v; }
-        const gapLead = leaderX == null ? Infinity : Math.max(0, leaderX - lenCells - x);
+        const gapLead = leaderX == null ? Infinity : Math.max(0, leaderX - lenCells - g0Cells - x);
 
         // Nearest red stop line ahead that the car can still stop at.
         let gapSig = Infinity;
@@ -221,18 +288,8 @@
           break;
         }
 
-        const vMax = vMaxAt(x);
-        let w = Math.min(v + accelIncrement(c.model, v, cell, dtS, rand), vMax);
-        w = Math.min(w, gapLead, gapSig);
-        if (gapLead !== Infinity) w = Math.min(w, safeSpeed(gapLead + tail(leaderV, bCells), bCells, w));
-        if (gapSig !== Infinity) w = Math.min(w, safeSpeed(gapSig, bCells, w));
-        w = Math.max(0, w);
-        // Hard braking = the rules (before the random slowdown) need more than
-        // the comfort deceleration. One extra cell is tolerated: the lead
-        // position is rounded to the grid, so its speed jitters by one cell.
-        if (v - w > bCells + 1) c.hardBrakes++;
-        const pr = v === 0 ? p0 : p;
-        if (w > 0 && rand() < pr) w = Math.max(0, w - 1);
+        const w = chooseSpeed(grid, v, c.model, vMaxAt(x), gapLead, leaderV, gapSig, p, p0, rand);
+        if (grid.hard) c.hardBrakes++;
 
         const decel = v - w;
         if (decel > c.maxDecel) c.maxDecel = decel;
@@ -261,7 +318,7 @@
       index: 0, isLead: true,
       cross0: leadCross0, crossLast: lead.reachedEnd ? lead.summary.tEnd : null,
       stops: lead.summary.stops, missedFirstGreen: false, finished: lead.reachedEnd,
-      travelS: lead.summary.travelS, hardBrakes: 0
+      travelS: lead.summary.travelS, hardBrakes: 0, maxDecelMs2: 0
     }];
     cars.forEach((c, i) => {
       const cross0 = c.crossT[startIdx];
@@ -272,7 +329,7 @@
         missedFirstGreen: cross0 == null || cross0 > firstGreenEnd,
         finished: crossLast != null,
         travelS: cross0 != null && crossLast != null ? (crossLast - cross0) / 1000 : null,
-        hardBrakes: c.hardBrakes
+        hardBrakes: c.hardBrakes, maxDecelMs2: c.maxDecel * cell / (dtS * dtS)
       });
     });
     list.forEach(c => {
@@ -289,14 +346,15 @@
       meanHeadwayS: headways.length ? headways.reduce((a, b) => a + b, 0) / headways.length : null,
       meanTravelS: travel.length ? travel.reduce((a, b) => a + b, 0) / travel.length : null,
       hardBrakeCount: list.reduce((s, c) => s + c.hardBrakes, 0),
-      cellM: cell, bCells, lenCells,
+      cellM: cell, bCells, lenCells, g0Cells, slowCells: grid.slowCells,
+      spacingM: grid.spacingM, jamDensityPerKm: 1000 / grid.spacingM,
       accel: {
         kind: nominal.kind, a0: App.vehicle.accelAt(nominal, 0), aAtTarget: App.vehicle.accelAt(nominal, vTargetMax),
         sigma, factorMin: factors.length ? Math.min(...factors) : 1, factorMax: factors.length ? Math.max(...factors) : 1,
         factorMean: factors.length ? factors.reduce((a, b) => a + b, 0) / factors.length : 1
       },
       vMaxKmh: vMaxCells.filter(v => v != null).map(v => v * cell / dtS * 3.6),
-      queueLengthM: nF * lenCells * cell,
+      queueLengthM: nF * (lenCells + g0Cells) * cell,
       steps
     };
     return {
@@ -326,5 +384,5 @@
     };
   }
 
-  App.platoon = { simulate, runBatch, tail, safeSpeed, accelIncrement, mulberry32, DEFAULTS };
+  App.platoon = { simulate, runBatch, tail, safeSpeed, accelIncrement, chooseSpeed, makeGrid, mulberry32, DEFAULTS, CELL_M, SLOWDOWN_MS };
 })(window.App = window.App || {});

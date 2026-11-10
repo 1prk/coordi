@@ -205,12 +205,46 @@
               <input class="input" type="number" min="0" max="40" step="1" id="anaSigma" value="13" title="Jeder Fahrer im Pulk beschleunigt mit einem eigenen Faktor (Normalverteilung, auf ±2σ begrenzt). 13 % entspricht dem Fahrerfaktor 0,60 ± 0,08 im Fahrdynamikmodell der Virginia Tech. Das Führungsfahrzeug bleibt nominal.">
             </div>
             <div class="field">
+              <label>Fahrzeuglänge [m]</label>
+              <input class="input" type="number" min="2" max="15" step="0.5" id="anaLen" value="4.5" title="Annahme: typischer Pkw. Das Raster ist 0,5 m.">
+            </div>
+            <div class="field">
+              <label>Abstand im Stand [m]</label>
+              <input class="input" type="number" min="0" max="10" step="0.5" id="anaGap" value="3.5" title="Lücke zwischen stehenden Fahrzeugen (Stoßstange zu Stoßstange). Long 2002 (TRR 1796) maß im Mittel 3,66 m. Abstand Front zu Front = Länge + Lücke.">
+            </div>
+            <div class="field">
               <label>Zufallszahl (Seed)</label>
               <div class="seed-row">
                 <input class="input" type="number" min="0" step="1" id="anaSeed" value="1">
                 <button type="button" class="btn btn-secondary" id="anaReroll" title="Anderen Zufallslauf würfeln">Neu würfeln</button>
               </div>
             </div>
+          </div>
+        </div>
+        <div class="fd-box" id="fdBox" style="display:none;">
+          <div class="fd-head">
+            <button type="button" class="btn btn-secondary" id="fdRun" title="Ringstraße ohne Signale: Fahrzeuge mit denselben Regeln wie im Pulk, Dichte schrittweise erhöht">Fundamentaldiagramm prüfen</button>
+            <span class="tag tag-experimental">EXPERIMENTELL</span>
+            <span class="panel-head-info" id="fdInfo">Vergleicht das Pulkmodell mit Literaturwerten (Kapazität, Staudichte, Wellengeschwindigkeit)</span>
+          </div>
+          <div id="fdError" class="node-empty" style="display:none; color:var(--sig-red);"></div>
+          <div id="fdResult" style="display:none;">
+            <div class="fd-summary" id="fdSummary"></div>
+            <div class="analysis-charts" id="fdCharts"></div>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Prüfung</th><th>Modell</th><th>Referenz</th><th>Ergebnis</th><th>Grundlage</th></tr></thead>
+                <tbody id="fdChecks"></tbody>
+              </table>
+            </div>
+            <h4 class="platoon-title">Empfindlichkeit: Abstand im Stand</h4>
+            <div class="table-scroll">
+              <table class="table">
+                <thead><tr><th>Lücke im Stand</th><th>Front zu Front</th><th>Staudichte</th><th>Kapazität</th><th>Wellengeschw.</th><th>Prüfungen</th></tr></thead>
+                <tbody id="fdSens"></tbody>
+              </table>
+            </div>
+            <div class="platoon-note" id="fdNote"></div>
           </div>
         </div>
         <div id="analysisError" class="node-empty" style="display:none; color:var(--sig-red);"></div>
@@ -317,6 +351,7 @@
 <script src="lib/d3.v7.min.js"></script>
 <script src="js/vehicle.js"></script>
 <script src="js/platoon.js"></script>
+<script src="js/fundamental.js"></script>
 <script src="js/analysis.js"></script>
 <script src="js/diagram.js"></script>
 <script src="js/state.js"></script>
