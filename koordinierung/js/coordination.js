@@ -262,7 +262,9 @@
       const runs = survivorAnchors.map(a => {
         const frontStart = a.s0 + tauA * 1000, frontEnd = frontStart + a.widthMs;
         const backStart = a.s0 + tauB * 1000, backEnd = backStart + a.widthMs;
-        return { frontStart, frontEnd, backStart, backEnd };
+        // origin = index of the cycle in `cycles` (same index as the real
+        // green window at the first node). The vehicle analysis uses it.
+        return { frontStart, frontEnd, backStart, backEnd, origin: a.origin };
       });
       runs.forEach(run => {
         assertWithinRealGreen(ordered[i - 1], run.frontStart, run.frontEnd, 'Startseite');

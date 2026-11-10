@@ -205,3 +205,15 @@ footer {
   .node-dirs { grid-template-columns: 1fr; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* - Vehicle analysis panel (see analysis.js) - */
+.analysis-params {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3);
+  padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-divider);
+}
+#analysisBody { padding: var(--space-3) var(--space-4); }
+#analysisPanel .node-empty { padding: var(--space-3) var(--space-4); }
+.analysis-kpis { margin-bottom: var(--space-3); }
+.analysis-charts { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
+.analysis-chart { display: block; max-width: 100%; }
+.analysis-readout { font-family: var(--mono); font-size: 12px; color: var(--text-muted); min-height: 18px; }

@@ -17,6 +17,13 @@
   // resRev hätten.
   let lastResHin = null, lastResRev = null;
 
+  // Vehicle analysis (see vehicle.js, analysis.js). analysisSel = the clicked
+  // band { tag: 'H'|'R', kind: 'qual'|'opt'|'part', key, segIdx } or null.
+  // analysisSim = { sim, points, tag } for the selected band, or null.
+  // lastDiagramOpts = the diagram options of the last recompute(), so the
+  // diagram can be drawn again (new selection) without a full recompute().
+  let analysisSel = null, analysisSim = null, analysisErr = '', lastDiagramOpts = null;
+
   // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
   // weiter heraus. Wird als Faktor an renderDiagram gereicht (dort mit der
   // Basis-Pixel/Sekunde-Rate multipliziert) - Wert bleibt über Neu-Rendern
@@ -80,6 +87,19 @@
     zoomResetBtn: document.getElementById('zoomResetBtn'),
     zoomInBtn: document.getElementById('zoomInBtn'),
     zoomLabel: document.getElementById('zoomLabel'),
+    analysisPanel: document.getElementById('analysisPanel'),
+    analysisInfo: document.getElementById('analysisInfo'),
+    analysisClear: document.getElementById('analysisClear'),
+    analysisError: document.getElementById('analysisError'),
+    analysisBody: document.getElementById('analysisBody'),
+    analysisKpis: document.getElementById('analysisKpis'),
+    analysisCharts: document.getElementById('analysisCharts'),
+    analysisNodes: document.getElementById('analysisNodes'),
+    anaTarget: document.getElementById('anaTarget'),
+    anaAccel: document.getElementById('anaAccel'),
+    anaDecel: document.getElementById('anaDecel'),
+    anaLost: document.getElementById('anaLost'),
+    anaYellow: document.getElementById('anaYellow'),
   };
 
   function showError(msg) {
@@ -101,6 +121,7 @@
     els.statsPanel.style.display = 'none';
     els.umlaufPanel.style.display = 'none';
     els.kmPanel.style.display = 'none';
+    els.analysisPanel.style.display = 'none';
   }
 
   /* ---------------- Tabs (Setup / Diagramm / Statistik) ---------------- */
@@ -434,6 +455,9 @@
   }
 
   function renderNodeList() {
+    // The node list changed (new file, import, order, t_U). The clicked band
+    // may not exist any more, so the vehicle analysis starts again.
+    analysisSel = null;
     const nodes = state.intersections;
     if (nodes.length === 0) {
       els.nodeList.innerHTML = '<div class="node-empty">Noch keine Knoten – über "+ Knoten hinzufügen" eine OCIT-CSV je Knoten hinzufügen.</div>';
@@ -777,6 +801,7 @@
     els.diagramPanel.style.display = 'block';
     els.tablePanel.style.display = 'block';
     els.kmPanel.style.display = 'block';
+    els.analysisPanel.style.display = 'block';
 
     /* ---- Kenngrößen ---- */
     const kpis = [{ label: 'System-Umlaufzeit t_U', value: (resHin.ok ? resHin.TU : resRev.TU) + ' s' }];
@@ -832,7 +857,10 @@
     const rangeParts = [hinGeom, revGeom].filter(Boolean);
     const globalTMin = Math.min(...rangeParts.map(d => d.tRangeMin));
     const globalTMax = Math.max(...rangeParts.map(d => d.tRangeMax));
-    diagramApi = renderDiagram(els.diagram, { TU, showQualitative, showOptimum, showPartial, showTimestamp, zoomLevel, globalTMin, globalTMax, hin: hinGeom, rev: revGeom });
+    lastDiagramOpts = { TU, showQualitative, showOptimum, showPartial, showTimestamp, zoomLevel, globalTMin, globalTMax, hin: hinGeom, rev: revGeom };
+    computeAnalysis();
+    drawDiagram();
+    renderAnalysisPanel();
     els.zoomLabel.textContent = Math.round(zoomLevel * 100) + ' %';
     const parts = [];
     if (resHin.ok) parts.push(`Hin: ${resHin.rows.length} Knoten, l_TP ${Math.round(resHin.lTP)} m`);
@@ -865,6 +893,100 @@
       </tr>`;
     }).join('');
   }
+
+  /* ---------------- Fahrzeug-Analyse ---------------- */
+  // Read the parameter fields. An empty field uses the default value.
+  function analysisParams() {
+    const num = (el, def) => (el.value.trim() === '' || !Number.isFinite(Number(el.value)) ? def : Number(el.value));
+    return {
+      accel: num(els.anaAccel, 1.5), decel: num(els.anaDecel, 1.5),
+      lostTimeS: num(els.anaLost, 2), yellowTolS: num(els.anaYellow, 0),
+      target: els.anaTarget.value.trim() === '' ? null : Number(els.anaTarget.value)
+    };
+  }
+
+  // Simulate one vehicle for the clicked band. The start node and the start
+  // green window come from the band:
+  // - Optimum bands (complete or incomplete): first node of the corridor,
+  //   real green window of the cycle (cycles[key].start).
+  // - Cross-section band: the departing node of the section (segIdx),
+  //   real green window of that occurrence.
+  // A missing band (stale selection) clears the selection.
+  function computeAnalysis() {
+    analysisSim = null; analysisErr = '';
+    if (!analysisSel) return;
+    const res = analysisSel.tag === 'H' ? lastResHin : lastResRev;
+    if (!res || !res.ok) { analysisSel = null; return; }
+    let startIdx, tGreenStart;
+    if (analysisSel.kind === 'qual') {
+      const [si, oi] = analysisSel.key.split(':').map(Number);
+      const seg = res.qualitativeBand && res.qualitativeBand.segments[si];
+      const occ = seg && seg.occurrences[oi];
+      if (!occ) { analysisSel = null; return; }
+      startIdx = si; tGreenStart = occ.frontStart;
+    } else {
+      const cyc = res.optimumBand && res.optimumBand.cycles[Number(analysisSel.key)];
+      if (!cyc) { analysisSel = null; return; }
+      startIdx = 0; tGreenStart = cyc.start;
+    }
+    const nodes = res.orderedRows.map(r => ({ name: r.name, station: r.station, greenSegs: r.greenSegs }));
+    const p = analysisParams();
+    try {
+      const sim = App.vehicle.simulate({
+        nodes, startIdx, tGreenStart,
+        params: { accel: p.accel, decel: p.decel, lostTimeS: p.lostTimeS, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray }
+      });
+      analysisSim = { sim, points: App.vehicle.samplePoints(sim, 0.5), tag: analysisSel.tag };
+    } catch (e) {
+      analysisErr = e.message;
+    }
+  }
+
+  // Draw the diagram with the current selection and trajectory.
+  function drawDiagram() {
+    if (!lastDiagramOpts) return;
+    diagramApi = renderDiagram(els.diagram, {
+      ...lastDiagramOpts,
+      selected: analysisSel ? { tag: analysisSel.tag, kind: analysisSel.kind, key: analysisSel.key } : null,
+      vehicle: analysisSim ? { tag: analysisSim.tag, points: analysisSim.points, events: analysisSim.sim.events } : null,
+      onBandClick: selectBand
+    });
+  }
+
+  function renderAnalysisPanel() {
+    const has = analysisSim != null;
+    els.analysisClear.style.display = analysisSel ? '' : 'none';
+    els.analysisError.style.display = analysisErr ? 'block' : 'none';
+    els.analysisError.textContent = analysisErr;
+    els.analysisBody.style.display = has ? 'block' : 'none';
+    if (!has) {
+      els.analysisInfo.textContent = analysisSel ? '' : 'Grünband im Diagramm anklicken';
+      els.analysisCharts.innerHTML = '';
+      return;
+    }
+    const { sim } = analysisSim;
+    els.analysisInfo.textContent = `${analysisSel.tag === 'H' ? 'Hinrichtung' : 'Gegenrichtung'} · Start ${sim.nodes[sim.startIdx].name}, ${fmtDateTimeShort(sim.tOrigin)}`;
+    els.analysisKpis.innerHTML = App.analysis.kpiHtml(sim);
+    els.analysisNodes.innerHTML = App.analysis.eventsHtml(sim);
+    App.analysis.renderCharts(els.analysisCharts, sim, { onHover: (pt) => { if (diagramApi) diagramApi.setVehicleMarker(pt); } });
+  }
+
+  function refreshAnalysis() {
+    computeAnalysis();
+    drawDiagram();
+    renderAnalysisPanel();
+  }
+
+  // A click on the selected band again clears the selection.
+  function selectBand(info) {
+    const key = String(info.key);
+    const same = analysisSel && analysisSel.tag === info.tag && analysisSel.kind === info.kind && analysisSel.key === key;
+    analysisSel = same ? null : { tag: info.tag, kind: info.kind, key, segIdx: info.segIdx };
+    refreshAnalysis();
+  }
+
+  els.analysisClear.addEventListener('click', () => { analysisSel = null; refreshAnalysis(); });
+  [els.anaTarget, els.anaAccel, els.anaDecel, els.anaLost, els.anaYellow].forEach(el => el.addEventListener('change', refreshAnalysis));
 
   /* ---------------- Koordinierungsmaß ---------------- */
   // Zwei frei einstellbare Zeitbänder (z. B. Vormittags-/Nachmittagsspitze),

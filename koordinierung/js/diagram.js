@@ -58,6 +58,11 @@
       return null;
     }
     const { TU, showQualitative, showOptimum, showPartial, showTimestamp, zoomLevel, globalTMin, globalTMax, hin, rev } = o;
+    // Vehicle analysis: `selected` = { tag, kind, key } marks the clicked band.
+    // `vehicle` = { tag, points, events } draws the simulated trajectory.
+    // `onBandClick` gets { tag, kind, key, segIdx } when the user clicks a band.
+    const selected = o.selected || null;
+    const vehicle = o.vehicle || null;
     const dirs = [hin, rev].filter(Boolean);
     if (dirs.length === 0 || !(globalTMax > globalTMin)) { container.innerHTML = ''; return null; }
 
@@ -133,6 +138,16 @@
         part: { color: bandColor.R.part }             // Rück Optimum unvollständig: blau, gestrichelt
       }
     };
+    // Helpers for the clickable band polygons. A band polygon carries its
+    // identity in data attributes. The selected band gets an orange outline.
+    const isSel = (tag, kind, key) => !!selected && selected.tag === tag && selected.kind === kind && String(selected.key) === String(key);
+    const bandAttrs = (tag, kind, key, segIdx) =>
+      ` data-band="1" data-tag="${tag}" data-kind="${kind}" data-key="${key}" data-seg="${segIdx}" style="cursor:pointer"`;
+    const strokeAttrs = (tag, kind, key, color, width, dash) =>
+      isSel(tag, kind, key)
+        ? `stroke="#ff7a00" stroke-width="3.2"${dash ? ` stroke-dasharray="${dash}"` : ''}`
+        : `stroke="${color}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}"` : ''}`;
+
     // APW-Wert 0 ist laut OCIT-Spezifikation ein Sonderfall, keine "normale"
     // Zahl wie jeder andere Wert (und ausdrücklich etwas anderes als "kein
     // Wert"/leer) - daher schraffiert statt Vollton, analog zu den
@@ -223,15 +238,16 @@
       if (!showQualitative || !d.qualitativeBand) return;
       const style = bandStyle[d.tag].qual;
       let qSvg = '';
-      d.qualitativeBand.segments.forEach(seg => {
+      d.qualitativeBand.segments.forEach((seg, si) => {
         const xA = X(seg.a.station), xB = X(seg.b.station);
-        seg.occurrences.forEach(occ => {
+        seg.occurrences.forEach((occ, oi) => {
           const yFrontA = Y(occ.frontStart), yFrontB = Y(occ.backStart);
           const yBackA = Y(occ.frontEnd), yBackB = Y(occ.backEnd);
           if (Math.max(yFrontA, yFrontB, yBackA, yBackB) < mT || Math.min(yFrontA, yFrontB, yBackA, yBackB) > mT + plotH) return;
           const pts = [[xA, yFrontA], [xB, yFrontB], [xB, yBackB], [xA, yBackA]]
             .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-          qSvg += `<polygon points="${pts}" fill="${style.url}" stroke="${style.color}" stroke-width="1.2"><title>${esc(seg.a.name)}: An ${occ.an}-Ab ${occ.ab} bei ${seg.vp_kmh.toFixed(0)} km/h (Querschnitt, ohne Verengung)</title></polygon>`;
+          const key = si + ':' + oi;
+          qSvg += `<polygon points="${pts}" fill="${style.url}" ${strokeAttrs(d.tag, 'qual', key, style.color, 1.2)}${bandAttrs(d.tag, 'qual', key, si)}><title>${esc(seg.a.name)}: An ${occ.an}-Ab ${occ.ab} bei ${seg.vp_kmh.toFixed(0)} km/h (Querschnitt, ohne Verengung) - Klick: Fahrzeug simulieren</title></polygon>`;
         });
       });
       svgInner += `<g clip-path="${clip}">${qSvg}</g>`;
@@ -247,7 +263,7 @@
       if (!showOptimum || !d.optimumBand) return;
       const style = bandStyle[d.tag].opt;
       let propSvg = '';
-      d.optimumBand.segments.forEach(seg => {
+      d.optimumBand.segments.forEach((seg, si) => {
         const xA = X(seg.a.station), xB = X(seg.b.station);
         seg.runs.forEach(run => {
           const yA0 = Y(run.frontStart), yA1 = Y(run.frontEnd);
@@ -256,7 +272,7 @@
           const pts = [[xA, yA0], [xA, yA1], [xB, yB1], [xB, yB0]]
             .map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
           const widthS = (run.frontEnd - run.frontStart) / 1000;
-          propSvg += `<polygon points="${pts}" fill="${style.url}" stroke="${style.color}" stroke-width="1.2"><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${widthS.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum)</title></polygon>`;
+          propSvg += `<polygon points="${pts}" fill="${style.url}" ${strokeAttrs(d.tag, 'opt', run.origin, style.color, 1.2)}${bandAttrs(d.tag, 'opt', run.origin, si)}><title>${esc(seg.a.name)} -> ${esc(seg.b.name)}: ${widthS.toFixed(1)}s bei ${seg.vp_kmh.toFixed(0)} km/h (Optimum) - Klick: Fahrzeug simulieren</title></polygon>`;
         });
       });
       svgInner += `<g clip-path="${clip}">${propSvg}</g>`;
@@ -274,7 +290,7 @@
       if (!showPartial || !d.optimumBand) return;
       const style = bandStyle[d.tag].part;
       let partSvg = '';
-      d.optimumBand.segments.forEach(seg => {
+      d.optimumBand.segments.forEach((seg, si) => {
         const xA = X(seg.a.station), xB = X(seg.b.station);
         seg.partialRuns.forEach(run => {
           const yA0 = Y(run.frontStart), yA1 = Y(run.frontEnd);
@@ -291,7 +307,7 @@
           // Weißer Halo unter der gestrichelten Kontur: hebt sie vom dichten
           // Querschnitts-Raster darunter ab, das sonst die Striche verschluckt.
           partSvg += `<polygon points="${pts}" fill="none" stroke="#fff" stroke-width="3.6" stroke-opacity="0.9" pointer-events="none"/>`
-            + `<polygon points="${pts}" fill="${style.color}" fill-opacity="${fillOpacity}" stroke="${style.color}" stroke-width="1.7" stroke-dasharray="${dash}"><title>${esc(title)}</title></polygon>`;
+            + `<polygon points="${pts}" fill="${style.color}" fill-opacity="${fillOpacity}" ${strokeAttrs(d.tag, 'part', run.cycleIdx, style.color, 1.7, dash)}${bandAttrs(d.tag, 'part', run.cycleIdx, si)}><title>${esc(title)} - Klick: Fahrzeug simulieren</title></polygon>`;
         });
       });
       svgInner += `<g clip-path="${clip}">${partSvg}</g>`;
@@ -364,6 +380,31 @@
         svgInner += `<g clip-path="${clip}">${overlay}</g>`;
       });
     });
+
+    // Simulated vehicle (see vehicle.js): the trajectory is a polyline of
+    // (station, time). A white line below the black line keeps it readable on
+    // top of the hatched bands. A red dot marks a stop at a stop line. A white
+    // dot marks a pass without a stop. The overlay ignores the mouse, so a
+    // click still reaches the band below it.
+    if (vehicle && vehicle.points && vehicle.points.length > 1) {
+      const line = vehicle.points.map(p => X(p.station).toFixed(1) + ',' + Y(p.tMs).toFixed(1)).join(' ');
+      let vSvg = `<polyline points="${line}" fill="none" stroke="#fff" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round"/>`
+        + `<polyline points="${line}" fill="none" stroke="#000" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+      const p0 = vehicle.points[0];
+      vSvg += `<circle cx="${X(p0.station).toFixed(1)}" cy="${Y(p0.tMs).toFixed(1)}" r="4.5" fill="#000" stroke="#fff" stroke-width="1.5"/>`;
+      (vehicle.events || []).forEach(ev => {
+        const cx = X(ev.station).toFixed(1), cy = Y(ev.tArrive).toFixed(1);
+        const label = ev.stopped
+          ? `${esc(ev.name)}: Halt bei Rot${ev.waitS != null ? ', Wartezeit ' + ev.waitS.toFixed(0) + ' s' : ''}`
+          : `${esc(ev.name)}: Durchfahrt mit ${(ev.vArrive * 3.6).toFixed(0)} km/h`;
+        vSvg += ev.stopped
+          ? `<circle cx="${cx}" cy="${cy}" r="5" fill="var(--sig-red)" stroke="#fff" stroke-width="1.5"><title>${label}</title></circle>`
+          : `<circle cx="${cx}" cy="${cy}" r="3.5" fill="#fff" stroke="#000" stroke-width="1.5"><title>${label}</title></circle>`;
+      });
+      svgInner += `<g clip-path="${clip}" pointer-events="none">${vSvg}</g>`;
+      // Marker that follows the mouse in the analysis charts (see setVehicleMarker).
+      svgInner += `<circle id="vehMarker" r="5.5" fill="#ff9800" stroke="#000" stroke-width="1.5" opacity="0" pointer-events="none"/>`;
+    }
 
     // Horizontale Orientierungslinie, die der Maus beim Überfahren des
     // Diagramms folgt (siehe mousemove weiter unten) - erleichtert das
@@ -510,8 +551,24 @@
       tooltipEl.style.display = 'none';
       if (hoverLineEl) hoverLineEl.setAttribute('opacity', '0');
     });
+    // A click on a band polygon starts a vehicle analysis (see app.js).
+    svg.on('click', (event) => {
+      const el = event.target && event.target.closest ? event.target.closest('[data-band]') : null;
+      if (!el || !o.onBandClick) return;
+      o.onBandClick({ tag: el.dataset.tag, kind: el.dataset.kind, key: el.dataset.key, segIdx: Number(el.dataset.seg) });
+    });
 
-    return { scrollToTime };
+    // Move the orange marker to a point of the trajectory, or hide it (null).
+    const vehMarkerEl = svgNode.querySelector('#vehMarker');
+    function setVehicleMarker(pt) {
+      if (!vehMarkerEl) return;
+      if (!pt) { vehMarkerEl.setAttribute('opacity', '0'); return; }
+      vehMarkerEl.setAttribute('cx', X(pt.station).toFixed(1));
+      vehMarkerEl.setAttribute('cy', Y(pt.tMs).toFixed(1));
+      vehMarkerEl.setAttribute('opacity', '1');
+    }
+
+    return { scrollToTime, setVehicleMarker };
   }
 
   App.diagram = { renderDiagram };
