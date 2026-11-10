@@ -70,7 +70,12 @@
     const sMin = Math.min(...allRows.map(r => r.station));
     const sMax = Math.max(...allRows.map(r => r.station));
     const corridor = sMax - sMin;
-    const sMinPlot = sMin - STATION_VISUAL_BUFFER_M, sMaxPlot = sMax + STATION_VISUAL_BUFFER_M;
+    // Experimental platoon: the standing queue lies upstream of the start node.
+    // The station axis gets extra room on that side, so the queue is visible.
+    const platoon = o.platoon || null;
+    const queuePad = platoon && platoon.upstreamM > 0 ? platoon.upstreamM + 6 : 0;
+    const sMinPlot = sMin - STATION_VISUAL_BUFFER_M - (platoon && platoon.sign > 0 ? queuePad : 0);
+    const sMaxPlot = sMax + STATION_VISUAL_BUFFER_M + (platoon && platoon.sign < 0 ? queuePad : 0);
 
     // mR großzügig bemessen (nicht nur ein schmaler Rand): die letzte
     // Stationsbeschriftung (Kopf-/Fußzeile, mittig über der Station
@@ -416,6 +421,19 @@
           + `<polygon points="${pts}" fill="#ff7a00" fill-opacity="0.07" stroke="#ff7a00" stroke-opacity="0.28" stroke-width="7" stroke-linejoin="round"/>`
           + `<polygon points="${pts}" fill="none" stroke="#ff7a00" stroke-width="1.8" stroke-linejoin="round"/></g>`;
       }
+    }
+
+    // EXPERIMENTAL platoon (see platoon.js): one thin slate line for each
+    // follower. The lines lie below the lead vehicle line. A station beyond
+    // the first node (queue) is visible because of the extra axis room.
+    if (platoon && platoon.traces && platoon.traces.length) {
+      let plSvg = '';
+      platoon.traces.forEach((tr, i) => {
+        if (tr.length < 2) return;
+        const line = tr.map(p => X(p.station).toFixed(1) + ',' + Y(p.tMs).toFixed(1)).join(' ');
+        plSvg += `<polyline points="${line}" fill="none" stroke="#5b6b8a" stroke-opacity="0.75" stroke-width="1.15" stroke-linejoin="round"/>`;
+      });
+      svgInner += `<g clip-path="${clip}" pointer-events="none">${plSvg}</g>`;
     }
 
     // Simulated vehicle (see vehicle.js): the trajectory is a polyline of

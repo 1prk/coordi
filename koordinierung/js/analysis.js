@@ -66,16 +66,78 @@
     return rows.join('');
   }
 
+  // EXPERIMENTAL platoon (see platoon.js): figure tiles.
+  // pl = { res, batch } (result of one run and statistics over several seeds).
+  function platoonKpiHtml(pl) {
+    const s = pl.res.summary, b = pl.batch;
+    const tiles = [
+      {
+        label: 'Ohne Halt durch', value: `${s.throughCount} von ${s.nCars}`,
+        cls: s.throughCount === s.nCars ? 'accent' : (s.throughCount < s.nCars / 2 ? 'warn' : ''),
+        sub: `dieser Lauf · Ø ${f1(b.mean)} in ${b.runs} Läufen (10–90 %: ${b.p10}–${b.p90})`
+      },
+      {
+        label: 'Start verpasst', value: `${s.missedFirstGreenCount}`, cls: s.missedFirstGreenCount ? 'warn' : '',
+        sub: 'kamen im ersten Grün nicht über die erste Haltlinie'
+      },
+      {
+        label: 'Abfluss-Zeitabstand', value: s.meanHeadwayS != null ? `${f1(s.meanHeadwayS)} s` : '–',
+        sub: 'Ø an der ersten Haltlinie (Richtwert ca. 2 s)'
+      },
+      {
+        label: 'Ø Reisezeit', value: s.meanTravelS != null ? `${f0(s.meanTravelS)} s` : '–',
+        sub: 'ab erster Haltlinie, nur angekommene Fahrzeuge'
+      },
+      {
+        label: 'Modellraster', value: `${f1(s.cellM)} m`,
+        sub: `v_max ${s.vMaxKmh.map(v => f1(v)).join(' / ')} km/h (auf das Raster gerundet)`
+      }
+    ];
+    return tiles.map(t => `
+      <div class="kpi card elev-sm ${t.cls || ''}">
+        <div class="k-label">${esc(t.label)}</div>
+        <div class="k-value">${esc(t.value)}</div>
+        <div class="k-sub">${esc(t.sub)}</div>
+      </div>`).join('');
+  }
+
+  // One row for each car of the platoon.
+  function platoonCarsHtml(pl, tOrigin) {
+    const at = (t) => (t == null ? '–' : `${fmtTimeShort(t)} (+${f1((t - tOrigin) / 1000)} s)`);
+    return pl.res.cars.map(c => {
+      let result;
+      if (c.through) result = '<span class="stat-ok">ohne Halt durch</span>';
+      else if (c.missedFirstGreen) result = '<span class="stat-bad">Start verpasst</span> (hält am ersten Knoten erneut)';
+      else if (!c.finished) result = '<span class="stat-bad">nicht angekommen</span>';
+      else result = `<span class="stat-warn">${c.stops} Halt${c.stops > 1 ? 'e' : ''}</span>`;
+      return `<tr>
+        <td>${c.isLead ? '1 (Führung)' : c.index + 1}</td>
+        <td>${at(c.cross0)}</td>
+        <td>${c.stops}</td>
+        <td>${at(c.crossLast)}</td>
+        <td>${c.travelS != null ? f0(c.travelS) + ' s' : '–'}</td>
+        <td>${result}</td>
+      </tr>`;
+    }).join('');
+  }
+
   // Draw the two charts into the element `el`.
   // handlers.onHover(point | null): called when the mouse moves over a chart.
   // The point has { tMs, s, station, v, a }.
-  function renderCharts(el, sim, handlers) {
+  function renderCharts(el, sim, handlers, platoon) {
     const d3 = window.d3;
     el.innerHTML = '';
     if (!d3) { el.textContent = 'D3.js konnte nicht geladen werden.'; return; }
     const pts = App.vehicle.samplePoints(sim, 0.25);
     const tS = (p) => (p.tMs - sim.tOrigin) / 1000;
-    const tEnd = Math.max(1, tS(pts[pts.length - 1]));
+    let tEnd = Math.max(1, tS(pts[pts.length - 1]));
+    // Experimental platoon: the follower speeds are drawn as thin grey lines.
+    // The time axis reaches until the last car has crossed the last node.
+    const plTraces = platoon && platoon.res.traces ? platoon.res.traces : null;
+    if (plTraces) {
+      const fin = platoon.res.cars.map(c => c.crossLast).filter(t => t != null);
+      if (fin.length) tEnd = Math.max(tEnd, (Math.max(...fin) - sim.tOrigin) / 1000 + 8);
+    }
     const W = Math.max(420, el.clientWidth || 800);
     const m = { l: 56, r: 14, t: 10, b: 36 };
     const innerW = W - m.l - m.r;
@@ -89,6 +151,10 @@
     ];
 
     const cursorLines = [];
+    if (plTraces) {
+      d3.select(el).append('div').attr('class', 'analysis-readout')
+        .html('<span style="color:#14181f;font-weight:700;">━</span> Führungsfahrzeug &nbsp; <span style="color:#5b6b8a;font-weight:700;">━</span> Pulk (EXPERIMENTELL, 1 Zufallslauf)');
+    }
     const readout = d3.select(el).append('div').attr('class', 'analysis-readout').text('Maus über ein Diagramm bewegen');
     const bisect = d3.bisector(p => tS(p)).center;
 
@@ -145,6 +211,14 @@
         }
       });
 
+      if (c.key === 'v' && plTraces) {
+        const clipId = 'plClip' + Math.random().toString(36).slice(2, 8);
+        svg.append('clipPath').attr('id', clipId).append('rect').attr('x', m.l).attr('y', m.t).attr('width', innerW).attr('height', c.h);
+        const gPl = svg.append('g').attr('clip-path', `url(#${clipId})`);
+        const plLine = d3.line().x(p => x((p.tMs - sim.tOrigin) / 1000)).y(p => y(p.v * 3.6));
+        plTraces.forEach(tr => gPl.append('path').attr('d', plLine(tr)).attr('fill', 'none')
+          .attr('stroke', '#5b6b8a').attr('stroke-width', 1).attr('stroke-opacity', 0.65).attr('stroke-linejoin', 'round'));
+      }
       const line = d3.line().x(p => x(tS(p))).y(p => y(c.val(p)));
       svg.append('path').datum(pts).attr('d', line).attr('fill', 'none').attr('stroke', '#000').attr('stroke-width', 1.8).attr('stroke-linejoin', 'round');
 
@@ -161,5 +235,5 @@
     });
   }
 
-  App.analysis = { kpiHtml, eventsHtml, renderCharts };
+  App.analysis = { kpiHtml, eventsHtml, renderCharts, platoonKpiHtml, platoonCarsHtml };
 })(window.App = window.App || {});

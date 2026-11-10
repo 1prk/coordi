@@ -251,5 +251,39 @@
     return pts;
   }
 
-  App.vehicle = { simulate, samplePoints, sectionProfile, greenAt, nextGreen };
+  // Position s (meters since the start node) and speed v (m/s) of a simulated
+  // vehicle at the absolute time tMs. Before the start the vehicle stands at
+  // s = 0. After the end it stays at the last position.
+  function stateAt(result, tMs) {
+    const t = (tMs - result.tOrigin) / 1000;
+    const ph = result.phases;
+    if (!ph.length || t <= 0) return { s: 0, v: 0 };
+    const last = ph[ph.length - 1];
+    if (t >= last.t1) return { s: last.s1, v: last.v1 };
+    for (const q of ph) {
+      if (t < q.t1) {
+        const tr = t - q.t0;
+        return { s: q.s0 + q.v0 * tr + 0.5 * q.a * tr * tr, v: q.v0 + q.a * tr };
+      }
+    }
+    return { s: last.s1, v: last.v1 };
+  }
+
+  // Absolute time (ms) at which the vehicle has covered the distance s
+  // (meters since the start node), or null if it never does.
+  function timeAtDistance(result, s) {
+    for (const q of result.phases) {
+      if (q.s1 + 1e-9 < s) continue;
+      const ds = s - q.s0;
+      if (ds <= 0) return result.tOrigin + q.t0 * 1000;
+      let tr;
+      if (Math.abs(q.a) < 1e-12) tr = q.v0 > 0 ? ds / q.v0 : null;
+      else tr = (-q.v0 + Math.sqrt(Math.max(0, q.v0 * q.v0 + 2 * q.a * ds))) / q.a;
+      if (tr == null) continue;
+      return result.tOrigin + (q.t0 + tr) * 1000;
+    }
+    return null;
+  }
+
+  App.vehicle = { simulate, samplePoints, sectionProfile, greenAt, nextGreen, stateAt, timeAtDistance };
 })(window.App = window.App || {});

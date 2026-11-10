@@ -23,6 +23,8 @@
   // lastDiagramOpts = the diagram options of the last recompute(), so the
   // diagram can be drawn again (new selection) without a full recompute().
   let analysisSel = null, analysisSim = null, analysisErr = '', lastDiagramOpts = null;
+  // EXPERIMENTAL platoon (see platoon.js): { res, batch, startIdx, sign } or null.
+  let analysisPlatoon = null;
 
   // Y-Achsen-Zoom: 1 = Basisstufe (~3 Umläufe sichtbar), >1 näher heran, <1
   // weiter heraus. Wird als Faktor an renderDiagram gereicht (dort mit der
@@ -100,6 +102,17 @@
     anaDecel: document.getElementById('anaDecel'),
     anaLost: document.getElementById('anaLost'),
     anaYellow: document.getElementById('anaYellow'),
+    anaPlatoon: document.getElementById('anaPlatoon'),
+    platoonParams: document.getElementById('platoonParams'),
+    anaPN: document.getElementById('anaPN'),
+    anaP: document.getElementById('anaP'),
+    anaP0: document.getElementById('anaP0'),
+    anaSeed: document.getElementById('anaSeed'),
+    anaReroll: document.getElementById('anaReroll'),
+    platoonResult: document.getElementById('platoonResult'),
+    platoonKpis: document.getElementById('platoonKpis'),
+    platoonCars: document.getElementById('platoonCars'),
+    platoonNote: document.getElementById('platoonNote'),
   };
 
   function showError(msg) {
@@ -912,8 +925,18 @@
   // - Cross-section band: the departing node of the section (segIdx),
   //   real green window of that occurrence.
   // A missing band (stale selection) clears the selection.
+  // Read the platoon parameters (experimental). An empty field uses the default.
+  function platoonParams() {
+    const D = App.platoon.DEFAULTS;
+    const num = (el, def) => (el.value.trim() === '' || !Number.isFinite(Number(el.value)) ? def : Number(el.value));
+    return {
+      nCars: Math.round(num(els.anaPN, D.nCars)), p: num(els.anaP, D.p), p0: num(els.anaP0, D.p0),
+      seed: Math.max(0, Math.round(num(els.anaSeed, D.seed)))
+    };
+  }
+
   function computeAnalysis() {
-    analysisSim = null; analysisErr = '';
+    analysisSim = null; analysisPlatoon = null; analysisErr = '';
     if (!analysisSel) return;
     const res = analysisSel.tag === 'H' ? lastResHin : lastResRev;
     if (!res || !res.ok) { analysisSel = null; return; }
@@ -937,6 +960,20 @@
         params: { accel: p.accel, decel: p.decel, lostTimeS: p.lostTimeS, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray }
       });
       analysisSim = { sim, points: App.vehicle.samplePoints(sim, 0.5), tag: analysisSel.tag };
+      if (els.anaPlatoon.checked) {
+        // The platoon uses the same target speed, acceleration and braking as
+        // the lead vehicle. One run is drawn. 40 more seeds give statistics.
+        const pp = platoonParams();
+        const input = {
+          nodes, startIdx, tGreenStart, lead: sim,
+          params: { accel: p.accel, decel: p.decel, yellowTolS: p.yellowTolS, targetKmh: p.target != null ? p.target : res.vpArray, ...pp }
+        };
+        try {
+          analysisPlatoon = { res: App.platoon.simulate(input), batch: App.platoon.runBatch(input, 40), startIdx, sign: sim.sign };
+        } catch (e) {
+          analysisErr = 'Pulk (experimentell): ' + e.message;
+        }
+      }
     } catch (e) {
       analysisErr = e.message;
     }
@@ -949,6 +986,9 @@
       ...lastDiagramOpts,
       selected: analysisSel ? { tag: analysisSel.tag, kind: analysisSel.kind, key: analysisSel.key } : null,
       vehicle: analysisSim ? { tag: analysisSim.tag, points: analysisSim.points, events: analysisSim.sim.events } : null,
+      platoon: analysisPlatoon
+        ? { traces: analysisPlatoon.res.traces, sign: analysisPlatoon.sign, upstreamM: analysisPlatoon.startIdx === 0 ? analysisPlatoon.res.summary.queueLengthM : 0 }
+        : null,
       onBandClick: selectBand
     });
   }
@@ -968,7 +1008,14 @@
     els.analysisInfo.textContent = `${analysisSel.tag === 'H' ? 'Hinrichtung' : 'Gegenrichtung'} · Start ${sim.nodes[sim.startIdx].name}, ${fmtDateTimeShort(sim.tOrigin)}`;
     els.analysisKpis.innerHTML = App.analysis.kpiHtml(sim);
     els.analysisNodes.innerHTML = App.analysis.eventsHtml(sim);
-    App.analysis.renderCharts(els.analysisCharts, sim, { onHover: (pt) => { if (diagramApi) diagramApi.setVehicleMarker(pt); } });
+    App.analysis.renderCharts(els.analysisCharts, sim, { onHover: (pt) => { if (diagramApi) diagramApi.setVehicleMarker(pt); } }, analysisPlatoon);
+    els.platoonResult.style.display = analysisPlatoon ? 'block' : 'none';
+    if (analysisPlatoon) {
+      els.platoonKpis.innerHTML = App.analysis.platoonKpiHtml(analysisPlatoon);
+      els.platoonCars.innerHTML = App.analysis.platoonCarsHtml(analysisPlatoon, sim.tOrigin);
+      const s = analysisPlatoon.res.summary;
+      els.platoonNote.textContent = `Experimentelles Nagel-Schreckenberg-Modell: Zellgröße ${s.cellM.toFixed(1)} m (so gewählt, dass eine Zelle je Sekunde² der eingestellten Beschleunigung entspricht), Fahrzeuglänge ${s.lenCells} Zellen, Zeitschritt 1 s, Seed ${els.anaSeed.value || 1}. Ergebnis ist ein Zufallslauf; die Statistik fasst 40 Läufe zusammen. Nicht an Messdaten validiert.`;
+    }
   }
 
   function refreshAnalysis() {
@@ -986,7 +1033,16 @@
   }
 
   els.analysisClear.addEventListener('click', () => { analysisSel = null; refreshAnalysis(); });
-  [els.anaTarget, els.anaAccel, els.anaDecel, els.anaLost, els.anaYellow].forEach(el => el.addEventListener('change', refreshAnalysis));
+  [els.anaTarget, els.anaAccel, els.anaDecel, els.anaLost, els.anaYellow, els.anaPN, els.anaP, els.anaP0, els.anaSeed]
+    .forEach(el => el.addEventListener('change', refreshAnalysis));
+  els.anaPlatoon.addEventListener('change', () => {
+    els.platoonParams.style.display = els.anaPlatoon.checked ? '' : 'none';
+    refreshAnalysis();
+  });
+  els.anaReroll.addEventListener('click', () => {
+    els.anaSeed.value = String(1 + Math.floor(Math.random() * 99999));
+    refreshAnalysis();
+  });
 
   /* ---------------- Koordinierungsmaß ---------------- */
   // Zwei frei einstellbare Zeitbänder (z. B. Vormittags-/Nachmittagsspitze),
