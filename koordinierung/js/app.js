@@ -202,6 +202,9 @@
   // Einstellungen eines gespeicherten Knotens auf einen frisch aufgebauten
   // Eintrag übertragen (CSV-Import und Paket-Import gleichermaßen).
   function applySavedNode(entry, saved) {
+    // Zuerst, denn die Handeingabe von t_U ändert Signalpläne und kann die
+    // Hauptsignal-Vorgabe ersetzen - die gespeicherte Wahl folgt danach.
+    if (saved.cycleTU) state.setManualCycle(entry, Number(saved.cycleTU), saved.cycleAnchorSec ?? NaN);
     if (saved.mainColHin != null) entry.mainColHin = saved.mainColHin;
     if (saved.mainColRev != null) entry.mainColRev = saved.mainColRev;
     entry.distanceHin = Number(saved.distanceHin) || 0;
@@ -248,7 +251,12 @@
           vpHin: n.vpHin,
           vpRev: n.vpRev,
           assignedTracks: n.assignedTracks || {},
-          pack: await App.datapack.pack(n)
+          // Handeingabe t_U (alte Steuergeräte ohne TX) - null = automatisch.
+          cycleTU: n.manualCycle ? n.manualCycle.tu : null,
+          cycleAnchorSec: n.manualCycle ? n.manualCycle.anchorSec : null,
+          // Ins Datenpaket kommen die Umlaufbeginne aus der Datei, nicht das
+          // von Hand erzeugte Raster; der Import berechnet es aus cycleTU neu.
+          pack: await App.datapack.pack({ ...n, cycleStarts: n.autoCycleStarts })
         });
       }
       const data = {
@@ -348,6 +356,40 @@
     }).join('');
   }
 
+  // Uhrzeit-Umrechnung für das Feld "Umlaufbeginn um" (Sekunden seit Mitternacht).
+  function secToHms(sec) {
+    if (!Number.isFinite(sec)) return '';
+    const p = (v) => String(v).padStart(2, '0');
+    return `${p(Math.floor(sec / 3600) % 24)}:${p(Math.floor(sec / 60) % 60)}:${p(sec % 60)}`;
+  }
+  function hmsToSec(s) {
+    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec((s || '').trim());
+    return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] || 0) : null;
+  }
+
+  // Handeingabe der Umlaufzeit t_U (und optional der Uhrzeit eines
+  // Umlaufbeginns) je Knoten - für CSV-Dateien aus alten Steuergeräten ohne
+  // TX-Spalte, siehe state.setManualCycle. Leeres t_U = automatisch aus TX.
+  function cycleFieldsHtml(n) {
+    const hasTx = (n.autoCycleStarts || []).length >= 2;
+    const m = n.manualCycle;
+    let note;
+    if (m) note = `Handeingabe: Umläufe im Raster ${m.tu} s${m.anchorSec == null ? ' ab dem ersten Zeitstempel' : ''}. Leeres t_U = zurück auf TX.`;
+    else if (hasTx) note = 'Umläufe aus der Spalte TX. Nur ausfüllen, um sie zu überschreiben.';
+    else note = 'Keine Umläufe (TX=0) in der Datei – t_U von Hand eintragen, sonst sind alle Signalgruppen gesperrt.';
+    return `<div class="node-cycle">
+        <div class="field">
+          <label>t_U manuell [s]</label>
+          <input class="input node-tu" type="number" min="1" max="3600" step="1" value="${m ? m.tu : ''}" placeholder="${hasTx ? 'auto (TX)' : 'z. B. 90'}">
+        </div>
+        <div class="field">
+          <label>Umlaufbeginn um [hh:mm:ss]</label>
+          <input class="input node-anchor" type="time" step="1" value="${m ? secToHms(m.anchorSec) : ''}" ${m ? '' : 'disabled'} title="Uhrzeit, zu der ein Umlauf beginnt (am ersten Aufnahmetag). Leer = erster Zeitstempel der Datei.">
+        </div>
+        <div class="node-cycle-note ${!m && !hasTx ? 'is-warn' : ''}">${esc(note)}</div>
+      </div>`;
+  }
+
   // Alle DET- + APW-Spalten eines Knotens als eine gemeinsame Liste - Basis
   // für den Det/APW-Zuordner je Signalgruppe (siehe trackPickerHtml).
   function trackOptions(n) {
@@ -441,6 +483,7 @@
           </div>
           <button type="button" class="btn btn-ghost node-remove" title="entfernen">Entfernen ✕</button>
         </div>
+        ${cycleFieldsHtml(n)}
         <div class="node-dirs">
           <div>
             <div class="tag tag-neutral">Hinrichtung</div>
@@ -475,6 +518,29 @@
     els.nodeList.querySelectorAll('.node-card').forEach(card => {
       const id = card.dataset.id;
       const node = nodes.find(n => n.id === id);
+      // t_U-Handeingabe: beide Felder lösen dieselbe Neuberechnung aus. Neu
+      // zeichnen (nicht nur recompute()), weil sich dadurch auch die
+      // Signalgruppen-Listen (gesperrt/wählbar) und die Kartenüberschrift ändern.
+      const onCycleChange = () => {
+        const tuRaw = card.querySelector('.node-tu').value.trim();
+        const tu = tuRaw === '' ? 0 : Number(tuRaw);
+        // Ohne t_U gibt es keinen Anker (das Feld ist dann gesperrt).
+        const anchor = tu ? hmsToSec(card.querySelector('.node-anchor').value) : null;
+        // Unveränderter Wert (z. B. zweites change-Ereignis beim Fokuswechsel,
+        // während renderNodeList() das Feld schon entfernt): nichts tun -
+        // sonst würde renderNodeList() ineinander verschachtelt aufgerufen.
+        const cur = node.manualCycle;
+        if ((cur ? cur.tu : 0) === tu && (cur ? cur.anchorSec : null) === anchor) return;
+        if (!state.setManualCycle(node, tu, anchor ?? NaN)) {
+          showError('t_U muss eine Zahl zwischen 1 und 3600 Sekunden sein.');
+        } else {
+          clearError();
+        }
+        renderNodeList();
+        recompute();
+      };
+      card.querySelector('.node-tu').addEventListener('change', onCycleChange);
+      card.querySelector('.node-anchor').addEventListener('change', onCycleChange);
       card.querySelector('.node-sig-hin').addEventListener('change', (e) => { node.mainColHin = Number(e.target.value); recompute(); });
       card.querySelector('.node-sig-rev').addEventListener('change', (e) => { node.mainColRev = Number(e.target.value); recompute(); });
       card.querySelector('.node-dist-hin').addEventListener('change', (e) => { node.distanceHin = Number(e.target.value) || 0; recompute(); });

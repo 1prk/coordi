@@ -92,10 +92,7 @@
   // damit die abgeleiteten Werte identisch berechnet werden.
   function assembleIntersection(fileName, p) {
     const TU = computeGlobalTU(p.cycleStarts);
-    const planByCol = new Map();
-    p.columns.forEach(col => {
-      planByCol.set(col.index, TU ? computeSignalplanRow(p.segsByCol.get(col.index), p.cycleStarts, TU) : null);
-    });
+    const planByCol = computePlans(p.columns, p.segsByCol, p.cycleStarts, TU);
     const defaultCol = p.columns.find(c => planByCol.get(c.index))?.index ?? null;
     return {
       id: uid(),
@@ -117,6 +114,14 @@
       assignedTracks: {},
       times: p.times,
       cycleStarts: p.cycleStarts,
+      // Umlaufbeginne aus der Datei (TX=0). Bleiben unverändert, wenn der
+      // Nutzer t_U von Hand setzt (setManualCycle) - so lässt sich die
+      // Handeingabe wieder zurücknehmen, und der Export (app.js exportConfig)
+      // legt diese Werte ins Datenpaket statt der berechneten.
+      autoCycleStarts: p.cycleStarts,
+      // Handeingabe { tu [s], anchorSec [s seit Mitternacht] | null } oder
+      // null = automatisch aus TX. Siehe setManualCycle.
+      manualCycle: null,
       splPeriods: p.splPeriods,
       TU,
       mainColHin: defaultCol,
@@ -136,6 +141,64 @@
     };
   }
 
+  // Signalplan (An/Ab/TF) je Signalgruppen-Spalte; null, wenn es keine TU gibt
+  // oder die Spalte keine verwertbare Grünphase hat.
+  function computePlans(columns, segsByCol, cycleStarts, TU) {
+    const planByCol = new Map();
+    columns.forEach(col => {
+      planByCol.set(col.index, TU ? computeSignalplanRow(segsByCol.get(col.index), cycleStarts, TU) : null);
+    });
+    return planByCol;
+  }
+
+  // Umlaufbeginne im festen Raster anchor + k * TU, die die ganze Aufnahme
+  // abdecken: der erste Beginn liegt höchstens auf dem ersten Zeitstempel,
+  // der letzte nach dem letzten - damit gibt es immer mindestens zwei und
+  // findEnclosingCycleStart() findet für jede Zeit einen Umlaufbeginn.
+  function gridCycleStarts(tFirst, tLast, tuMs, anchorMs) {
+    const k0 = Math.floor((tFirst - anchorMs) / tuMs);
+    const out = [];
+    for (let t = anchorMs + k0 * tuMs; ; t += tuMs) {
+      out.push(t);
+      if (t > tLast) break;
+    }
+    return out;
+  }
+
+  // Für CSV-Dateien aus alten Steuergeräten ohne TX-Spalte: Umlaufzeit tu [s]
+  // und optional die Uhrzeit eines Umlaufbeginns anchorSec [s seit Mitternacht
+  // des ersten Aufnahmetags] von Hand vorgeben. Ohne Anker beginnt das Raster
+  // am ersten Zeitstempel. tu leer/0 = Handeingabe zurücknehmen (zurück auf
+  // die TX-Werte aus der Datei). Setzt Umlaufbeginne, TU, Signalpläne und
+  // - falls noch keine gültige Wahl da ist - die Hauptsignale neu.
+  // Liefert false, wenn tu ungültig ist (dann bleibt alles unverändert).
+  function setManualCycle(node, tu, anchorSec) {
+    const hasTu = Number.isFinite(tu) && tu > 0;
+    if (tu && !(hasTu && tu <= 3600)) return false;
+    if (hasTu) {
+      const tFirst = node.times[0], tLast = node.times[node.times.length - 1];
+      const tuMs = Math.round(tu) * 1000;
+      let anchorMs = tFirst;
+      if (Number.isFinite(anchorSec)) {
+        const day = new Date(tFirst);
+        day.setHours(0, 0, 0, 0);
+        anchorMs = day.getTime() + Math.round(anchorSec) * 1000;
+      }
+      node.cycleStarts = gridCycleStarts(tFirst, tLast, tuMs, anchorMs);
+      node.TU = Math.round(tu);
+      node.manualCycle = { tu: Math.round(tu), anchorSec: Number.isFinite(anchorSec) ? Math.round(anchorSec) : null };
+    } else {
+      node.cycleStarts = node.autoCycleStarts;
+      node.TU = computeGlobalTU(node.cycleStarts);
+      node.manualCycle = null;
+    }
+    node.planByCol = computePlans(node.columns, node.segsByCol, node.cycleStarts, node.TU);
+    const defaultCol = node.columns.find(c => node.planByCol.get(c.index))?.index ?? null;
+    if (node.mainColHin == null || !node.planByCol.get(node.mainColHin)) node.mainColHin = defaultCol;
+    if (node.mainColRev == null || !node.planByCol.get(node.mainColRev)) node.mainColRev = defaultCol;
+    return true;
+  }
+
   function addIntersection(entry) { intersections.push(entry); }
   function removeIntersection(id) {
     const i = intersections.findIndex(x => x.id === id);
@@ -151,6 +214,6 @@
 
   App.state = {
     intersections, buildIntersection, restoreIntersection, addIntersection, removeIntersection, moveIntersection,
-    clearIntersections
+    clearIntersections, setManualCycle
   };
 })(window.App = window.App || {});

@@ -71,6 +71,12 @@ html, body { margin: 0; padding: 0; }
 .node-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .node-main .node-title { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 16px; }
 .node-main .node-file { font-size: 12px; color: var(--text-muted); font-family: var(--mono); margin-top: 2px; }
+.node-cycle {
+  display: grid; grid-template-columns: 150px 190px 1fr; gap: var(--space-3); align-items: end;
+  border-bottom: 1px solid var(--color-divider); padding-bottom: var(--space-3); margin-bottom: var(--space-3);
+}
+.node-cycle-note { font-size: 12px; color: var(--text-muted); padding-bottom: 8px; }
+.node-cycle-note.is-warn { color: var(--color-accent-700); font-weight: 600; }
 .node-dirs { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); }
 .node-dir-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
 .node-dir-fields .field-wide { grid-column: span 2; min-width: 0; }
