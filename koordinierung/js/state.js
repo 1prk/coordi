@@ -119,6 +119,9 @@
       // Handeingabe wieder zurücknehmen, und der Export (app.js exportConfig)
       // legt diese Werte ins Datenpaket statt der berechneten.
       autoCycleStarts: p.cycleStarts,
+      // t_U aus der Datei (null = keine gefunden). Nur wenn null, ist die
+      // Handeingabe erlaubt (setManualCycle) - ein Wert aus der Datei gewinnt immer.
+      autoTU: TU,
       // Handeingabe { tu [s], anchorSec [s seit Mitternacht] | null } oder
       // null = automatisch aus TX. Siehe setManualCycle.
       manualCycle: null,
@@ -172,7 +175,12 @@
   // die TX-Werte aus der Datei). Setzt Umlaufbeginne, TU, Signalpläne und
   // - falls noch keine gültige Wahl da ist - die Hauptsignale neu.
   // Liefert false, wenn tu ungültig ist (dann bleibt alles unverändert).
+  // Hat die Datei selbst ein t_U (node.autoTU, aus TX), wird die Handeingabe
+  // ignoriert: das t_U aus der Datei hat immer Vorrang (Rückgabe true, nichts
+  // geändert - z. B. beim Import einer Konfiguration, die dazu noch ein
+  // altes cycleTU enthält).
   function setManualCycle(node, tu, anchorSec) {
+    if (node.autoTU) return true;
     const hasTu = Number.isFinite(tu) && tu > 0;
     if (tu && !(hasTu && tu <= 3600)) return false;
     if (hasTu) {

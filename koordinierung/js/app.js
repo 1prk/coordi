@@ -371,22 +371,24 @@
   // Umlaufbeginns) je Knoten - für CSV-Dateien aus alten Steuergeräten ohne
   // TX-Spalte, siehe state.setManualCycle. Leeres t_U = automatisch aus TX.
   function cycleFieldsHtml(n) {
-    const hasTx = (n.autoCycleStarts || []).length >= 2;
+    // Hat die Datei ein t_U (aus TX), ist die Handeingabe gesperrt: der Wert
+    // aus der Datei gilt immer (siehe state.setManualCycle).
+    const fromFile = !!n.autoTU;
     const m = n.manualCycle;
     let note;
-    if (m) note = `Handeingabe: Umläufe im Raster ${m.tu} s${m.anchorSec == null ? ' ab dem ersten Zeitstempel' : ''}. Leeres t_U = zurück auf TX.`;
-    else if (hasTx) note = 'Umläufe aus der Spalte TX. Nur ausfüllen, um sie zu überschreiben.';
-    else note = 'Keine Umläufe (TX=0) in der Datei – t_U von Hand eintragen, sonst sind alle Signalgruppen gesperrt.';
+    if (fromFile) note = `t_U ${n.autoTU} s aus der Spalte TX der Datei – Handeingabe nur für Dateien ohne TX möglich.`;
+    else if (m) note = `Handeingabe: Umläufe im Raster ${m.tu} s${m.anchorSec == null ? ' ab dem ersten Zeitstempel' : ''}. Leeres t_U = Handeingabe zurücknehmen.`;
+    else note = 'Kein t_U (TX=0) in der Datei gefunden – t_U von Hand eintragen, sonst sind alle Signalgruppen gesperrt.';
     return `<div class="node-cycle">
         <div class="field">
           <label>t_U manuell [s]</label>
-          <input class="input node-tu" type="number" min="1" max="3600" step="1" value="${m ? m.tu : ''}" placeholder="${hasTx ? 'auto (TX)' : 'z. B. 90'}">
+          <input class="input node-tu" type="number" min="1" max="3600" step="1" value="${m ? m.tu : ''}" placeholder="${fromFile ? n.autoTU + ' (TX)' : 'z. B. 90'}" ${fromFile ? 'disabled' : ''}>
         </div>
         <div class="field">
           <label>Umlaufbeginn um [hh:mm:ss]</label>
           <input class="input node-anchor" type="time" step="1" value="${m ? secToHms(m.anchorSec) : ''}" ${m ? '' : 'disabled'} title="Uhrzeit, zu der ein Umlauf beginnt (am ersten Aufnahmetag). Leer = erster Zeitstempel der Datei.">
         </div>
-        <div class="node-cycle-note ${!m && !hasTx ? 'is-warn' : ''}">${esc(note)}</div>
+        <div class="node-cycle-note ${!m && !fromFile ? 'is-warn' : ''}">${esc(note)}</div>
       </div>`;
   }
 
